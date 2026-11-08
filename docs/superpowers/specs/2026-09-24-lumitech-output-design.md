@@ -99,10 +99,11 @@ commands then decide what is sent. The rules are those of
   Loxone colour at a full channel asks for.
 
   **Except on Zigbee** (amended 2026-11-08): a Zigbee light that carries XY
-  takes XY, unless the command names hue/saturation. Two Tuya
-  `_TZ3210_rhroxocj TS0505B` lamps (colour capabilities HS + XY + CT)
-  answered MoveToHueAndSaturation with Success and kept their colour; ZHA,
-  which drove them before, sends colour as XY. The KAJPLATS measurement
+  always takes XY, also for `color` (the web UI's colour picker), on a
+  group and on a single lamp. Two Tuya `_TZ3210_rhroxocj TS0505B` lamps
+  (colour capabilities HS + XY + CT) answered MoveToHueAndSaturation with
+  Success and kept their colour; MoveToColor changed it, measured on the
+  Pi. ZHA, which drove them before, sends colour as XY. The KAJPLATS measurement
   above is a Matter lamp and keeps hue/saturation. On a group, the output's own
   name still decides between `color` and `color_xy`; `lumitech` names
   neither, so it needs this fixed rule.
