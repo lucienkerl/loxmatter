@@ -1054,6 +1054,11 @@ projectsync.multiple_miniservers:
 projectsync.miniserver_without_configuration:
   en: "The Miniserver “{title}” has no configuration whatsoever in this project file yet - no place a virtual input/output could be created in."
   de: "Der Miniserver „{title}“ hat in dieser Projektdatei noch keinerlei Konfiguration - kein Ort, an dem sich ein virtueller Ein-/Ausgang anlegen liesse."
+projectsync.container_address_title:
+  # The title of a plan row that moves an existing device's or group's
+  # virtual input/output container to the bridge's current address.
+  en: "Bridge address"
+  de: "Adresse der Bridge"
 projectsync.no_uid_found:
   en: "No existing U-ID in the expected format was found in the file, from which an installation suffix could be derived."
   de: "Keine bestehende U-ID im erwarteten Format in der Datei gefunden, aus der sich ein Installations-Suffix ableiten liesse."
@@ -3621,6 +3626,12 @@ web.export.projectsync_attr_cmd_on:
 web.export.projectsync_attr_cmd_off:
   en: "Command off"
   de: "Befehl Aus"
+web.export.projectsync_attr_address:
+  en: "Address"
+  de: "Adresse"
+web.export.projectsync_attr_port:
+  en: "Port"
+  de: "Port"
 web.export.projectsync_download_button:
   en: "Download patched file"
   de: "Gepatchte Datei herunterladen"

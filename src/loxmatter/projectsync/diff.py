@@ -25,6 +25,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
+from loxmatter import i18n
 from loxmatter.export.documents import LoxoneCommand
 from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import LoxoneInput, to_inputs
@@ -88,6 +89,15 @@ class PlanEntry:
     # on NEW_SIGNAL/NEW_DEVICE entries: an object that already exists keeps
     # whatever room Loxone Config gave it, so its room is never looked at.
     room: str | None = None
+    # Set only on an UPDATED entry for a device or group CONTAINER rather
+    # than one of its commands: the `open_start` of that `VirtualUdpIn`/
+    # `VirtualOut` element, so `patch` edits that container's own start
+    # tag. A container carries the bridge's address - the IP and UDP port
+    # inputs come from, the `http://ip:port` outputs are sent to - and
+    # before this field a changed address reached only containers created
+    # after the change: re-reading the file left every existing one
+    # pointing at the old port.
+    container_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +256,49 @@ def _plan_outputs(
     return plan_entries
 
 
+def _plan_containers(
+    kind: str,
+    owner_kind: str,
+    owner_id: int,
+    owner_label: str,
+    containers: Mapping[str, Element],
+    desired: dict[str, str],
+) -> list[PlanEntry]:
+    """An UPDATED entry for every existing container of this owner whose
+    bridge address differs from `desired`.
+
+    Only the address attributes are compared - the container's `Title` is
+    the user's to rename in Loxone Config, and is left alone exactly like
+    a command's room. An owner normally has one container per kind; a
+    file where someone split one by hand gets one entry per container, so
+    none of them is left behind on the old address."""
+    prefix = f"{'g' if owner_kind == 'group' else 'd'}{owner_id}_"
+    seen: set[int] = set()
+    plan_entries: list[PlanEntry] = []
+    for key, container in containers.items():
+        if not key.startswith(prefix) or container.open_start in seen:
+            continue
+        seen.add(container.open_start)
+        changes = _diff_managed_attrs(container.attrs, desired, tuple(desired))
+        if not changes:
+            continue
+        suffix = "" if len(seen) == 1 else f"_{len(seen)}"
+        plan_entries.append(
+            PlanEntry(
+                kind,
+                owner_id,
+                owner_label,
+                f"{prefix}container{suffix}",
+                i18n.t("projectsync.container_address_title"),
+                PlanStatus.UPDATED,
+                changes,
+                owner_kind=owner_kind,
+                container_at=container.open_start,
+            )
+        )
+    return plan_entries
+
+
 def _is_managed_owner_key(key: str) -> bool:
     """Whether `key`'s owner segment (everything before the first `_`)
     looks like something THIS module could have created: `d{id}` for a
@@ -296,23 +349,66 @@ def build_plan(
     commands_by_device: dict[int, Sequence[StoredCommand]],
     groups: Sequence[StoredGroup] = (),
     commands_by_group: dict[int, Sequence[StoredGroupCommand]] | None = None,
+    *,
+    bridge_ip: str | None = None,
+    port: int | None = None,
+    listen: int | None = None,
 ) -> SyncPlan:
+    """`bridge_ip`, `port` and `listen` are the address new containers get
+    (`patch._new_device_edit`). Given, every EXISTING container is compared
+    against the same address too, so a changed IP or port reaches the
+    whole file and not only what this sync creates. Without them - a plan
+    built for something other than a patch - containers are not looked at."""
     entries: list[PlanEntry] = []
     known_input_keys: set[str] = set()
     known_output_keys: set[str] = set()
+    input_address: dict[str, str] = {}
+    output_address: dict[str, str] = {}
+    if bridge_ip:
+        if port is not None:
+            input_address = {"Address": bridge_ip, "Port": str(port)}
+        if listen is not None:
+            output_address = {"Address": f"http://{bridge_ip}:{listen}"}
 
     for device in devices:
         inputs = to_inputs(signals_by_device.get(device.id, []), device.id, device.label)
         outputs = to_outputs(commands_by_device.get(device.id, []))
         known_input_keys.update(entry.key for entry in inputs)
         known_output_keys.update(command.key for command in outputs)
+        if input_address:
+            entries += _plan_containers(
+                "input",
+                "device",
+                device.id,
+                device.label,
+                index.input_containers,
+                input_address,
+            )
         entries += _plan_inputs(index, device, inputs)
+        if output_address:
+            entries += _plan_containers(
+                "output",
+                "device",
+                device.id,
+                device.label,
+                index.output_containers,
+                output_address,
+            )
         entries += _plan_outputs(index, "device", device.id, device.label, outputs)
 
     # Groups have outputs only - no signals, no inputs (design 2).
     for group in groups:
         outputs = to_group_outputs((commands_by_group or {}).get(group.id, []))
         known_output_keys.update(command.key for command in outputs)
+        if output_address:
+            entries += _plan_containers(
+                "output",
+                "group",
+                group.id,
+                group.label,
+                index.output_containers,
+                output_address,
+            )
         entries += _plan_outputs(index, "group", group.id, group.label, outputs)
 
     owner_rooms: dict[tuple[str, int], str | None] = {

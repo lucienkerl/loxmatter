@@ -62,6 +62,7 @@ from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
 from loxmatter.projectsync.rooms import RoomStatus, room_key
 from loxmatter.projectsync.savedate import saved_date_attrs
+from loxmatter.projectsync.scan import Element
 from loxmatter.projectsync.schema import (
     find_any_iodata_attrs,
     new_caption_open_tag,
@@ -163,8 +164,16 @@ def _place_u_for(place_us: Mapping[str, str], entry: PlanEntry) -> str | None:
     return None if entry.room is None else place_us.get(room_key(entry.room))
 
 
+def _container_at(index: ProjectIndex, entry: PlanEntry) -> Element:
+    containers = index.input_containers if entry.kind == "input" else index.output_containers
+    return next(c for c in containers.values() if c.open_start == entry.container_at)
+
+
 def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
-    element = (index.input_cmds if entry.kind == "input" else index.output_cmds)[entry.key]
+    if entry.container_at is not None:
+        element = _container_at(index, entry)
+    else:
+        element = (index.input_cmds if entry.kind == "input" else index.output_cmds)[entry.key]
     edits: list[_Edit] = []
     for name, (_, new_value) in entry.changes.items():
         span = _attr_span(index.text, element.open_start, element.open_end, name)
