@@ -122,6 +122,11 @@ class ProjectIndex:
     # that holds one `RightGroup` per room. `None` in projects from before
     # the rights system; a room created there gets no `RGR`.
     right_group_caption: Element | None = None
+    # Every top-level `<C>` with its subtree - the whole file, for what
+    # lives outside the selected `LoxLIVE` block: the `InputRef`/`OutputRef`
+    # blocks on program pages that wire a virtual input or output
+    # (`projectsync.reconcile`, design 2026-11-08).
+    top_level: list[Element] = field(default_factory=list)
 
 
 def _find_all_loxlive(elements: list[Element]) -> list[Element]:
@@ -288,4 +293,5 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
         if place_caption is None
         else [e for e in place_caption.children if e.type == "Place"],
         right_group_caption=right_group_caption,
+        top_level=top_level,
     )

@@ -41,7 +41,7 @@ then, even if Loxone Config did not do it."""
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -60,6 +60,7 @@ from loxmatter.model.store import (
 from loxmatter.projectsync.diff import PlanEntry, PlanStatus, SyncPlan
 from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
+from loxmatter.projectsync.reconcile import owner_cmds, ref_blocks
 from loxmatter.projectsync.rooms import RoomStatus, room_key
 from loxmatter.projectsync.savedate import saved_date_attrs
 from loxmatter.projectsync.scan import Element
@@ -381,6 +382,175 @@ def _saved_date_edits(index: ProjectIndex, saved_at: datetime) -> list[_Edit]:
     return edits
 
 
+# --- Two-way sync (design 2026-11-08) ---------------------------------------
+
+_IODATA_TAG = re.compile(r"<IoData\b[^>]*/>")
+_CO_U = re.compile(r'<Co\b[^>]*?\bU="([^"]*)"')
+# A connector with incoming links: `<Co ...>` + `<In .../>` children +
+# `</Co>`. Loxone Config writes `Nc` as the number of `In` children and
+# leaves it out, self-closing the `Co`, when there is none (measured on
+# the maintainer's file: 0 exceptions among 2,239 connectors).
+_CO_WITH_INPUTS = re.compile(r"<Co\b([^>]*?)(?<!/)>((?:\s*<In\b[^>]*/>)+)\s*</Co>")
+_IN_TAG = re.compile(r"<In\b[^>]*/>")
+_INPUT_ATTR = re.compile(r'\bInput="([^"]*)"')
+_NC_ATTR = re.compile(r'\s+Nc="[^"]*"')
+_NC_VALUE = re.compile(r'\bNc="[^"]*"')
+
+
+def _input_of(tag: str) -> str | None:
+    match = _INPUT_ATTR.search(tag)
+    return None if match is None else match.group(1)
+
+
+def _line_span(text: str, element: Element) -> tuple[int, int]:
+    """The element's span, widened to its whole line when it stands on one
+    of its own, so a deletion leaves no blank, indented line behind."""
+    start, end = element.open_start, element.outer_end
+    line_start = start
+    while line_start > 0 and text[line_start - 1] in " \t":
+        line_start -= 1
+    if line_start == 0 or text[line_start - 1] == "\n":
+        start = line_start
+        if text.startswith("\r\n", end):
+            end += 2
+        elif text.startswith("\n", end):
+            end += 1
+    return start, end
+
+
+def _inside(position: int, spans: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= position < end for start, end in spans)
+
+
+def _deletion_edits(
+    index: ProjectIndex,
+    plan: SyncPlan,
+    deletions: Collection[str],
+    keep_containers: Collection[str],
+) -> tuple[list[_Edit], list[tuple[int, int]]]:
+    """Removes the orphaned objects of every owner prefix in `deletions`
+    (`d8`), the program-page blocks that wire them, and every link that
+    pointed at a removed connector. Returns the edits and the removed
+    spans, so other edits can stay clear of them.
+
+    A container whose every command goes is removed whole - unless its
+    owner prefix is in `keep_containers`, because this sync puts a new
+    command into it."""
+    doomed = [
+        entry
+        for entry in plan.entries
+        if entry.status is PlanStatus.ORPHANED and entry.key.split("_", 1)[0] in deletions
+    ]
+    if not doomed:
+        return [], []
+
+    by_container: dict[int, tuple[Element, list[Element], str]] = {}
+    for entry in doomed:
+        by_key = index.input_cmds if entry.kind == "input" else index.output_cmds
+        containers = index.input_containers if entry.kind == "input" else index.output_containers
+        container = containers[entry.key]
+        slot = by_container.setdefault(
+            container.open_start, (container, [], entry.key.split("_", 1)[0])
+        )
+        slot[1].append(by_key[entry.key])
+
+    removed: list[Element] = []
+    for container, cmds, prefix in by_container.values():
+        starts = {cmd.open_start for cmd in cmds}
+        whole = all(child.open_start in starts for child in container.children)
+        if whole and prefix not in keep_containers:
+            removed.append(container)
+        else:
+            removed.extend(cmds)
+
+    refs = ref_blocks(index)
+    blocks: list[Element] = []
+    for element in removed:
+        is_command = element.type in ("VirtualUdpInCmd", "VirtualOutCmd")
+        commands = [element] if is_command else list(element.children)
+        for command in commands:
+            blocks += [block for block, _page in refs.get(command.attrs.get("U", ""), [])]
+    removed += blocks
+
+    spans = sorted({_line_span(index.text, element) for element in removed})
+    edits = [_Edit(start, end, "") for start, end in spans]
+
+    gone: set[str] = set()
+    for element in removed:
+        gone.update(_CO_U.findall(index.text, element.open_start, element.outer_end))
+    for match in _CO_WITH_INPUTS.finditer(index.text):
+        if _inside(match.start(), spans):
+            continue
+        inputs = _IN_TAG.findall(match.group(2))
+        kept = [tag for tag in inputs if _input_of(tag) not in gone]
+        if len(kept) == len(inputs):
+            continue
+        if kept:
+            nc = f'Nc="{len(kept)}"'
+            attrs = match.group(1)
+            attrs = _NC_VALUE.sub(nc, attrs) if _NC_VALUE.search(attrs) else f"{attrs} {nc}"
+            replacement = f"<Co{attrs}>{''.join(kept)}</Co>"
+        else:
+            replacement = f"<Co{_NC_ATTR.sub('', match.group(1)).rstrip()}/>"
+        edits.append(_Edit(match.start(), match.end(), replacement))
+    return edits, spans
+
+
+def _room_move_edits(
+    index: ProjectIndex,
+    moves: Mapping[str, str],
+    place_us: Mapping[str, str],
+    removed: Sequence[tuple[int, int]],
+) -> list[_Edit]:
+    """Points every existing object of an owner prefix (`d5_`) in `moves`
+    at the Loxone room the user chose loxmatter's room for."""
+    edits: list[_Edit] = []
+    for prefix, room in moves.items():
+        place_u = place_us.get(room_key(room))
+        if place_u is None:
+            continue
+        for cmd in owner_cmds(index, prefix):
+            if cmd.inner_end is None or _inside(cmd.open_start, removed):
+                continue
+            iodata = _IODATA_TAG.search(index.text, cmd.open_end, cmd.inner_end)
+            if iodata is None:
+                display = index.text.find("<Display", cmd.open_end, cmd.inner_end)
+                at = cmd.inner_end if display < 0 else display
+                edits.append(_Edit(at, at, f'<IoData Pr="{escape_attr_value(place_u)}"/>'))
+                continue
+            span = _attr_span(index.text, iodata.start(), iodata.end(), "Pr")
+            if span is None:
+                at = iodata.end() - 2
+                edits.append(_Edit(at, at, f' Pr="{escape_attr_value(place_u)}"'))
+            else:
+                edits.append(_Edit(span[0], span[1], f'Pr="{escape_attr_value(place_u)}"'))
+    return edits
+
+
+def _rename_edits(
+    index: ProjectIndex, titles: Mapping[int, str], removed: Sequence[tuple[int, int]]
+) -> list[_Edit]:
+    """Sets the `Title` of each container (by `open_start`) in `titles` -
+    the names the user settled on (`reconcile.container_titles`)."""
+    containers = {
+        c.open_start: c
+        for c in [*index.input_containers.values(), *index.output_containers.values()]
+    }
+    edits: list[_Edit] = []
+    for start, title in titles.items():
+        container = containers[start]
+        if _inside(start, removed):
+            continue
+        replacement = f'Title="{escape_attr_value(title)}"'
+        span = _attr_span(index.text, container.open_start, container.open_end, "Title")
+        if span is None:
+            at = container.open_end - (2 if container.self_closing else 1)
+            edits.append(_Edit(at, at, f" {replacement}"))
+        else:
+            edits.append(_Edit(span[0], span[1], replacement))
+    return edits
+
+
 def _apply_edits(text: str, edits: list[_Edit]) -> str:
     for edit in sorted(edits, key=lambda e: e.start, reverse=True):
         text = text[: edit.start] + edit.replacement + text[edit.end :]
@@ -400,6 +570,9 @@ def apply_plan(
     port: int,
     listen: int,
     saved_at: datetime | None = None,
+    room_moves: Mapping[str, str] | None = None,
+    renames: Mapping[int, str] | None = None,
+    deletions: Collection[str] = (),
 ) -> bytes:
     """Builds the patched file (design section 3.4/7): updates, new signals
     in already-existing device containers, and completely new device
@@ -408,7 +581,13 @@ def apply_plan(
 
     `saved_at` (time-zone aware) becomes the file's "last saved" stamp if
     anything changed; without it, or without a change, the stamp stays
-    as the file had it."""
+    as the file had it.
+
+    The two-way sync's decisions (design 2026-11-08): `room_moves` maps an
+    owner prefix (`d5_`) to the loxmatter room its existing objects move
+    into - the room must be among `plan.rooms`; `renames` maps a
+    container's `open_start` to its new title; `deletions` names the orphan
+    owner prefixes (`d8`) whose objects are removed, links and all."""
     desired_inputs: dict[str, LoxoneInput] = {}
     desired_outputs: dict[str, LoxoneCommand] = {}
     for device in devices:
@@ -422,13 +601,28 @@ def apply_plan(
             desired_outputs[output_item.key] = output_item
 
     place_us, edits, created_count = _room_edits(index, plan)
+    # A container that gets a new command must survive the clean-up.
+    keep_containers = {
+        f"{'g' if e.owner_kind == 'group' else 'd'}{e.device_id}"
+        for e in plan.entries
+        if e.status is PlanStatus.NEW_SIGNAL
+    }
+    deletion_edits, removed = _deletion_edits(index, plan, deletions, keep_containers)
+    edits += deletion_edits
+    edits += _room_move_edits(index, room_moves or {}, place_us, removed)
+    edits += _rename_edits(index, renames or {}, removed)
     # (kind, owner_kind, id) - NOT (kind, id): both counters start at 1,
     # so group 1 and device 1 would otherwise share one container. `dict`
     # preserves the plan's order, so the generated file is reproducible.
     new_device_groups: dict[tuple[str, str, int], list[PlanEntry]] = {}
     for entry in plan.entries:
         if entry.status is PlanStatus.UPDATED:
-            edits += _update_edits(index, entry)
+            target = entry.container_at
+            if target is None:
+                cmds = index.input_cmds if entry.kind == "input" else index.output_cmds
+                target = cmds[entry.key].open_start
+            if not _inside(target, removed):
+                edits += _update_edits(index, entry)
         elif entry.status is PlanStatus.NEW_SIGNAL:
             source = desired_inputs if entry.kind == "input" else desired_outputs
             edits.append(_new_signal_edit(index, entry, source, _place_u_for(place_us, entry)))

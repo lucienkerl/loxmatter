@@ -25,6 +25,17 @@ people who don't know the code.
   you read in", not "changed since a template download". Until a file is
   read, nothing is marked.
 
+- **Sync with Loxone in both directions.** After you read in your project
+  file, the export screen lists what differs and in which direction: devices
+  only loxmatter has, rooms or names changed on either side, and objects
+  only Loxone still has. "Start sync" then asks, one device at a time,
+  which room or name is right (or skips it), offers objects of removed
+  devices for deletion together with their wiring on program pages, and
+  shows a summary before the file is written. Where you pick Loxone,
+  loxmatter takes the room or name over. A device whose inputs you spread
+  over several rooms in Loxone is left as it is, and a new signal joins the
+  room its siblings share in Loxone.
+
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks
   (Thread, Zigbee, or nothing - every combination works). The installer no

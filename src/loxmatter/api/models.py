@@ -804,6 +804,68 @@ class ProjectSyncRoomOut(BaseModel):
     loxone_title: str | None
 
 
+class ProjectSyncRoomDifferenceOut(BaseModel):
+    """An owner whose objects all sit in one Loxone room other than
+    loxmatter's (design 2026-11-08, section 3). `owner` is `device:5` or
+    `group:2`, the key `decisions.rooms` answers by. `loxone`/`loxmatter`
+    are `None` for "no room"."""
+
+    model_config = ConfigDict(frozen=True)
+
+    owner: str
+    label: str
+    loxone: str | None
+    loxmatter: str | None
+    preselect: str
+
+
+class ProjectSyncNameDifferenceOut(BaseModel):
+    """An owner whose Loxone container carries another name than
+    loxmatter's label (design 2026-11-08, section 3)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    owner: str
+    loxone: str
+    loxmatter: str
+    preselect: str
+
+
+class ProjectSyncSplitRoomsOut(BaseModel):
+    """An owner whose objects Loxone spreads over several rooms - shown,
+    never changed (design 2026-11-08, section 3)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    owner: str
+    label: str
+    loxmatter: str | None
+    rooms: list[str]
+
+
+class ProjectSyncLinkOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    page: str
+
+
+class ProjectSyncOrphanOut(BaseModel):
+    """The orphaned objects of one owner (design 2026-11-08, section 5).
+    `prefix` (`d8`) is what `decisions.delete` names; `reason` is
+    `removed`, `via_group` or `signal_dropped`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    prefix: str
+    label: str
+    reason: str
+    group_labels: list[str]
+    titles: list[str]
+    links: list[ProjectSyncLinkOut]
+    delete_by_default: bool
+
+
 class ProjectSyncPlanOut(BaseModel):
     """Response of `POST /api/export/project-sync` - plan and the patched
     file in one response (design section 4/7): no second server round
@@ -825,6 +887,12 @@ class ProjectSyncPlanOut(BaseModel):
     rooms: list[ProjectSyncRoomOut] = Field(default_factory=list)
     has_changes: bool = False
     patched_base64: str | None = None
+    room_differences: list[ProjectSyncRoomDifferenceOut] = Field(default_factory=list)
+    name_differences: list[ProjectSyncNameDifferenceOut] = Field(default_factory=list)
+    split_rooms: list[ProjectSyncSplitRoomsOut] = Field(default_factory=list)
+    orphans: list[ProjectSyncOrphanOut] = Field(default_factory=list)
+    # Whether the decisions sent along were stored in loxmatter (`apply`).
+    applied: bool = False
 
 
 class ResendIntervalOut(BaseModel):

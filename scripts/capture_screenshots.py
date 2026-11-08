@@ -458,14 +458,14 @@ def capture(page: Page) -> None:
         select_view(page, "Export")
         page.set_input_files('input[type="file"]', str(sample))
         page.wait_for_timeout(2500)  # upload plus diff computation
-        # Counter row plus the first expanded device block - exactly what
-        # the caption talks about. The explanatory text above the
-        # counters belongs to `export.png`.
+        # The two-way sync's counts plus its first list (design
+        # 2026-11-08) - what the caption talks about. The explanatory text
+        # above the counters belongs to `export.png`.
         shoot(
             page,
             "project-sync",
-            ".projectsync-summary",
-            "nth:.projectsync-device:0",
+            ".sync-tiles",
+            "nth:.sync-section:0",
             pad_top=0,
         )
 

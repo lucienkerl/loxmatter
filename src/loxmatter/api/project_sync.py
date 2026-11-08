@@ -42,20 +42,89 @@ second set of signal keys for the same device).
 from __future__ import annotations
 
 import base64
+import json
 from datetime import timedelta
+from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
+from loxmatter import i18n
 from loxmatter.api.models import (
     ProjectSyncEntryOut,
+    ProjectSyncLinkOut,
     ProjectSyncMiniserverOut,
+    ProjectSyncNameDifferenceOut,
+    ProjectSyncOrphanOut,
     ProjectSyncPlanOut,
+    ProjectSyncRoomDifferenceOut,
     ProjectSyncRoomOut,
+    ProjectSyncSplitRoomsOut,
 )
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
 from loxmatter.projectsync.diff import PlanEntry, SyncPlan
 from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError
-from loxmatter.projectsync.sync import ProjectSyncResult, run_sync
+from loxmatter.projectsync.reconcile import Reconciliation, Side, SyncDecisions
+from loxmatter.projectsync.sync import ProjectSyncResult, apply_decisions_to_store, run_sync
+
+_SIDES: tuple[Side, ...] = ("loxone", "loxmatter")
+
+
+def _parse_decisions(raw: str | None) -> SyncDecisions:
+    """`{"rooms": {"device:5": "loxone"}, "names": {...}, "delete": ["d8"]}`
+    - an unknown side or a wrong shape is the client's mistake, a 400."""
+    if not raw:
+        return SyncDecisions()
+    try:
+        data: Any = json.loads(raw)
+        rooms = {str(k): v for k, v in dict(data.get("rooms", {})).items()}
+        names = {str(k): v for k, v in dict(data.get("names", {})).items()}
+        delete = frozenset(str(prefix) for prefix in data.get("delete", []))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=400, detail=i18n.t("api.errors.projectsync_bad_decisions")
+        ) from exc
+    if any(v not in _SIDES for v in [*rooms.values(), *names.values()]):
+        raise HTTPException(status_code=400, detail=i18n.t("api.errors.projectsync_bad_decisions"))
+    return SyncDecisions(rooms=rooms, names=names, delete=delete)
+
+
+def _reconciliation_out(reconciliation: Reconciliation) -> dict[str, Any]:
+    return {
+        "room_differences": [
+            ProjectSyncRoomDifferenceOut(
+                owner=d.owner.ref,
+                label=d.owner.label,
+                loxone=d.loxone,
+                loxmatter=d.owner.room,
+                preselect=d.preselect,
+            )
+            for d in reconciliation.rooms
+        ],
+        "name_differences": [
+            ProjectSyncNameDifferenceOut(
+                owner=n.owner.ref, loxone=n.loxone, loxmatter=n.owner.label, preselect=n.preselect
+            )
+            for n in reconciliation.names
+        ],
+        "split_rooms": [
+            ProjectSyncSplitRoomsOut(
+                owner=s.owner.ref, label=s.owner.label, loxmatter=s.owner.room, rooms=s.rooms
+            )
+            for s in reconciliation.split
+        ],
+        "orphans": [
+            ProjectSyncOrphanOut(
+                prefix=o.prefix,
+                label=o.label,
+                reason=o.reason,
+                group_labels=o.group_labels,
+                titles=[e.title for e in o.entries],
+                links=[ProjectSyncLinkOut(title=link.title, page=link.page) for link in o.links],
+                delete_by_default=o.delete_by_default,
+            )
+            for o in reconciliation.orphans
+        ],
+    }
 
 
 def _target_room(plan: SyncPlan, entry: PlanEntry) -> str | None:
@@ -119,12 +188,25 @@ def build_project_sync_router(store: Store) -> APIRouter:
             ' "last saved" stamp - is written in it. Without it, the offset the file'
             " last recorded is used.",
         ),
+        decisions: str | None = Form(
+            None,
+            description='The user\'s answers as JSON: `{"rooms": {"device:5": "loxone"},'
+            ' "names": {"group:2": "loxmatter"}, "delete": ["d8"]}`. An owner left out'
+            " is skipped. Without it, nothing is decided and nothing deleted.",
+        ),
+        apply: bool = Query(
+            False,
+            description="Also store the decisions in loxmatter (Loxone's rooms and names"
+            " where the user picked Loxone) and record the sync's baseline - sent with"
+            " the download, never with the first look at a file.",
+        ),
     ) -> ProjectSyncPlanOut:
         """Builds the diff plan and the patched file in memory -
         writes nothing to disk and marks no device as exported (unlike
         `/api/export/download`: an uploaded project file is not a
         downloaded template, see design section 4)."""
         raw = await file.read()
+        chosen = _parse_decisions(decisions)
         offset = None if utc_offset is None else timedelta(minutes=utc_offset)
 
         def sync(ip: str | None) -> ProjectSyncResult:
@@ -136,6 +218,7 @@ def build_project_sync_router(store: Store) -> APIRouter:
                 listen=listen,
                 miniserver_ip=ip,
                 utc_offset=offset,
+                decisions=chosen,
             )
 
         try:
@@ -163,6 +246,8 @@ def build_project_sync_router(store: Store) -> APIRouter:
         except ProjectFormatError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        if apply:
+            apply_decisions_to_store(store, result)
         return ProjectSyncPlanOut(
             entries=_entries_out(result.plan),
             rooms=[
@@ -171,6 +256,8 @@ def build_project_sync_router(store: Store) -> APIRouter:
             ],
             has_changes=result.plan.has_changes,
             patched_base64=base64.b64encode(result.patched).decode("ascii"),
+            applied=apply,
+            **_reconciliation_out(result.reconciliation),
         )
 
     return router

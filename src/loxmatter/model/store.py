@@ -66,6 +66,7 @@ from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.setup_store import SetupStore
+from loxmatter.model.sync_baseline_store import SyncBaselineStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
 from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
@@ -1553,6 +1554,7 @@ class Store:
         self.zigbee_settings = ZigbeeSettingsStore(self._db)
         # Firmware updates (design 2026-09-30) - same connection twice more.
         self.firmware_status = FirmwareStatusStore(self._db)
+        self.sync_baseline = SyncBaselineStore(self._db)
         self.firmware_settings = FirmwareSettingsStore(self._db)
         self.dcl = DclStore(self._db)
         # Where the first-run setup assistant stands (design 2026-11-07).

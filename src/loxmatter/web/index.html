@@ -2326,6 +2326,123 @@
           <template x-if="projectSync.plan">
             <div>
               <!--
+                The two-way sync's overview (design 2026-11-08, section 6):
+                what differs and in which direction - owners loxmatter adds,
+                differences to decide, objects only Loxone still has. The
+                detailed per-signal plan below stays, folded away.
+              -->
+              <p class="banner ok" x-show="projectSync.done" x-text="t('web.sync.done')"></p>
+              <div class="sync-tiles">
+                <div class="sync-tile">
+                  <strong x-text="syncOwners().same"></strong>
+                  <span x-text="t('web.sync.tile_same')"></span>
+                </div>
+                <div class="sync-tile is-to-loxone">
+                  <strong x-text="syncOwners().added.length"></strong>
+                  <span x-text="t('web.sync.tile_added')"></span>
+                </div>
+                <div class="sync-tile is-differs">
+                  <strong x-text="syncDifferences().length"></strong>
+                  <span x-text="t('web.sync.tile_differs')"></span>
+                </div>
+                <div class="sync-tile is-orphan">
+                  <strong x-text="syncOrphans().length"></strong>
+                  <span x-text="t('web.sync.tile_orphans')"></span>
+                </div>
+              </div>
+              <p
+                class="hint"
+                x-show="!syncHasQuestions() && syncOwners().added.length === 0 && !projectSync.plan.has_changes"
+                x-text="t('web.sync.in_sync')"
+              ></p>
+
+              <section class="sync-section" x-show="syncDifferences().length > 0 || (projectSync.plan.split_rooms || []).length > 0">
+                <h3 x-text="t('web.sync.differences_heading')"></h3>
+                <p class="hint" x-text="t('web.sync.differences_hint')"></p>
+                <template x-for="d in syncDifferences()" :key="d.id">
+                  <div class="sync-row">
+                    <div class="sync-row-text">
+                      <strong x-text="d.label"></strong>
+                      <span
+                        class="hint"
+                        x-text="t(d.type === 'room' ? 'web.sync.row_room' : 'web.sync.row_name', { loxmatter: d.type === 'room' ? syncRoomText(d.loxmatter) : d.loxmatter, loxone: d.type === 'room' ? syncRoomText(d.loxone) : d.loxone })"
+                      ></span>
+                    </div>
+                    <span
+                      class="sync-pill"
+                      :class="d.preselect === 'loxone' ? 'is-to-loxmatter' : 'is-to-loxone'"
+                      x-text="d.preselect === 'loxone' ? t('web.sync.changed_in_loxone') : t('web.sync.changed_in_loxmatter')"
+                    ></span>
+                  </div>
+                </template>
+                <template x-for="split in projectSync.plan.split_rooms || []" :key="split.owner">
+                  <div class="sync-row">
+                    <div class="sync-row-text">
+                      <strong x-text="split.label"></strong>
+                      <span
+                        class="hint"
+                        x-text="t('web.sync.row_split', { rooms: split.rooms.map((r) => syncRoomText(r)).join(', ') })"
+                      ></span>
+                    </div>
+                    <span class="sync-pill" x-text="t('web.sync.split_pill')"></span>
+                  </div>
+                </template>
+              </section>
+
+              <section class="sync-section" x-show="syncOwners().added.length > 0">
+                <h3 x-text="t('web.sync.added_heading')"></h3>
+                <template x-for="owner in syncOwners().added" :key="owner.key">
+                  <div class="sync-row">
+                    <div class="sync-row-text">
+                      <strong x-text="owner.label"></strong>
+                      <span
+                        class="hint"
+                        x-text="owner.newDevice ? (owner.room ? t('web.sync.goes_to_room', { room: owner.room }) : '') : t('web.sync.row_new_signals', { signals: owner.newSignals.join(', ') }) + (owner.room ? ' · ' + t('web.sync.goes_to_room', { room: owner.room }) : '')"
+                      ></span>
+                    </div>
+                    <span
+                      class="sync-pill is-to-loxone"
+                      x-text="owner.newDevice ? t('web.sync.pill_new') : t('web.sync.pill_extended')"
+                    ></span>
+                  </div>
+                </template>
+              </section>
+
+              <section class="sync-section" x-show="syncOrphans().length > 0">
+                <h3 x-text="t('web.sync.orphans_heading')"></h3>
+                <template x-for="orphan in syncOrphans()" :key="orphan.prefix">
+                  <div class="sync-row">
+                    <div class="sync-row-text">
+                      <strong x-text="orphan.label"></strong>
+                      <span class="hint" x-text="syncOrphanReason(orphan) + ' · ' + syncOrphanLinks(orphan)"></span>
+                    </div>
+                    <span
+                      class="sync-pill"
+                      :class="orphan.delete_by_default ? 'is-orphan' : ''"
+                      x-text="orphan.delete_by_default ? t('web.sync.pill_delete_suggested') : t('web.sync.pill_kept')"
+                    ></span>
+                  </div>
+                </template>
+              </section>
+
+              <div class="sync-actions">
+                <button
+                  class="primary"
+                  x-show="syncHasQuestions()"
+                  @click="openSyncWizard()"
+                  :disabled="projectSync.busy"
+                  x-text="t('web.sync.start')"
+                ></button>
+                <button
+                  :class="{ primary: !syncHasQuestions() }"
+                  @click="downloadPatchedProject()"
+                  x-text="syncHasQuestions() ? t('web.sync.download_without_decisions') : t('web.export.projectsync_download_button')"
+                ></button>
+              </div>
+
+              <details class="projectsync-details">
+                <summary x-text="t('web.sync.details_heading')"></summary>
+              <!--
                 Review-Fix Important #5: the table now hangs on
                 `has_changes || projectSyncHasInformationalEntries(...)`,
                 no longer only on `has_changes` -
@@ -2510,11 +2627,7 @@
                   </details>
                 </template>
               </div>
-              <button
-                class="primary"
-                @click="downloadPatchedProject()"
-                x-text="t('web.export.projectsync_download_button')"
-              ></button>
+              </details>
             </div>
           </template>
         </div>
@@ -3795,6 +3908,7 @@
       exists once PER TILE, here the `<dialog>` sits exactly once in the
       document (see above), so a fixed id cannot collide.
     -->
+
     <dialog
       x-ref="signalsModal"
       class="signals-modal"
@@ -4115,6 +4229,154 @@
             </div>
           </template>
         </div>
+      </template>
+    </dialog>
+
+    <!--
+      The two-way sync (design 2026-11-08, section 6): one question per
+      difference, then the clean-up in Loxone, then a summary of both
+      directions. Opened from the project-sync card; nothing is written
+      before the last step.
+    -->
+    <dialog x-ref="syncDialog" class="sync-dialog" aria-labelledby="sync-dialog-heading">
+      <!-- Built once the translations are in, like the group dialog: its
+           static texts would otherwise keep the raw keys. -->
+      <template x-if="stringsReady">
+      <div class="sync-dialog-body">
+        <div class="sync-dialog-head">
+          <h2 id="sync-dialog-heading" x-text="t('web.sync.dialog_heading')"></h2>
+          <span style="flex: 1 1 auto"></span>
+          <span class="hint" x-text="t('web.sync.step', { step: syncStepNumber() })"></span>
+          <button
+            class="sync-dialog-close"
+            :title="t('web.signals.modal_close')"
+            :aria-label="t('web.signals.modal_close')"
+            @click="closeSyncWizard()"
+          ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        </div>
+        <div class="sync-progress"><div :style="'width:' + (syncStepNumber() * 33.4) + '%'"></div></div>
+
+        <template x-if="syncWizard.step === 'differences' && syncCurrentDifference()">
+          <div class="sync-step">
+            <p
+              class="hint"
+              x-text="t('web.sync.question_count', { n: syncWizard.index + 1, total: syncDifferences().length })"
+            ></p>
+            <h3
+              x-text="t(syncCurrentDifference().type === 'room' ? 'web.sync.question_room' : 'web.sync.question_name', { label: syncCurrentDifference().label })"
+            ></h3>
+            <div class="sync-choices">
+              <button
+                type="button"
+                class="sync-choice"
+                :class="{ chosen: syncWizard.choices[syncCurrentDifference().id] === 'loxone' }"
+                :aria-pressed="String(syncWizard.choices[syncCurrentDifference().id] === 'loxone')"
+                @click="syncChoose('loxone')"
+              >
+                <span class="hint" x-text="t('web.sync.side_loxone')"></span>
+                <strong
+                  x-text="syncCurrentDifference().type === 'room' ? syncRoomText(syncCurrentDifference().loxone) : syncCurrentDifference().loxone"
+                ></strong>
+                <span class="hint" x-text="t('web.sync.loxmatter_takes_it')"></span>
+              </button>
+              <button
+                type="button"
+                class="sync-choice"
+                :class="{ chosen: syncWizard.choices[syncCurrentDifference().id] === 'loxmatter' }"
+                :aria-pressed="String(syncWizard.choices[syncCurrentDifference().id] === 'loxmatter')"
+                @click="syncChoose('loxmatter')"
+              >
+                <span class="hint" x-text="t('web.sync.side_loxmatter')"></span>
+                <strong
+                  x-text="syncCurrentDifference().type === 'room' ? syncRoomText(syncCurrentDifference().loxmatter) : syncCurrentDifference().loxmatter"
+                ></strong>
+                <span class="hint" x-text="t('web.sync.loxone_takes_it')"></span>
+              </button>
+            </div>
+            <label class="sync-check">
+              <input type="checkbox" x-model="syncWizard.sameForRest" />
+              <span
+                x-text="t(syncCurrentDifference().type === 'room' ? 'web.sync.same_for_rest_rooms' : 'web.sync.same_for_rest_names')"
+              ></span>
+            </label>
+            <div class="sync-actions">
+              <button type="button" x-show="syncWizard.index > 0" @click="syncBack()" x-text="t('web.sync.back')"></button>
+              <span style="flex: 1 1 auto"></span>
+              <button type="button" @click="syncNext(true)" x-text="t('web.sync.skip')"></button>
+              <button type="button" class="primary" @click="syncNext(false)" x-text="t('web.sync.take_next')"></button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="syncWizard.step === 'orphans'">
+          <div class="sync-step">
+            <h3 x-text="t('web.sync.orphans_question')"></h3>
+            <p class="hint" x-text="t('web.sync.orphans_explain')"></p>
+            <template x-for="orphan in syncOrphans()" :key="orphan.prefix">
+              <label class="sync-orphan">
+                <input type="checkbox" x-model="syncWizard.deletes[orphan.prefix]" />
+                <span class="sync-row-text">
+                  <strong x-text="orphan.label"></strong>
+                  <span class="hint" x-text="syncOrphanReason(orphan) + ' · ' + orphan.titles.join(', ')"></span>
+                  <span
+                    class="banner warn sync-link-warning"
+                    x-show="orphan.links.length > 0"
+                    x-text="t('web.sync.orphan_link_warning', { pages: [...new Set(orphan.links.map((l) => l.page).filter(Boolean))].join(', ') })"
+                  ></span>
+                </span>
+              </label>
+            </template>
+            <div class="sync-actions">
+              <button type="button" x-show="syncDifferences().length > 0" @click="syncBack()" x-text="t('web.sync.back')"></button>
+              <span style="flex: 1 1 auto"></span>
+              <button type="button" @click="syncKeepAll()" x-text="t('web.sync.keep_all')"></button>
+              <button
+                type="button"
+                class="primary"
+                @click="syncWizard.step = 'summary'"
+                x-text="syncDeleteCount() > 0 ? t('web.sync.delete_next', { count: syncDeleteCount() }) : t('web.sync.next')"
+              ></button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="syncWizard.step === 'summary'">
+          <div class="sync-step" x-data="{ get summary() { return syncSummary() } }">
+            <h3 x-text="t('web.sync.summary_heading')"></h3>
+            <div class="sync-choices">
+              <div class="sync-summary-col">
+                <span class="sync-pill is-to-loxone" x-text="t('web.sync.to_loxone')"></span>
+                <ul>
+                  <template x-for="line in summary.toLoxone" :key="line"><li x-text="line"></li></template>
+                </ul>
+                <p class="hint" x-show="summary.toLoxone.length === 0" x-text="t('web.sync.nothing')"></p>
+                <p class="hint" x-text="t('web.sync.to_loxone_hint')"></p>
+              </div>
+              <div class="sync-summary-col">
+                <span class="sync-pill is-to-loxmatter" x-text="t('web.sync.to_loxmatter')"></span>
+                <ul>
+                  <template x-for="line in summary.toLoxmatter" :key="line"><li x-text="line"></li></template>
+                </ul>
+                <p class="hint" x-show="summary.toLoxmatter.length === 0" x-text="t('web.sync.nothing')"></p>
+                <p class="hint" x-text="t('web.sync.to_loxmatter_hint')"></p>
+              </div>
+            </div>
+            <p class="hint" x-show="summary.skipped > 0" x-text="t('web.sync.skipped', { count: summary.skipped })"></p>
+            <p class="banner danger" x-show="syncWizard.error" x-text="syncWizard.error"></p>
+            <div class="sync-actions">
+              <button type="button" @click="syncBack()" x-show="syncHasQuestions()" x-text="t('web.sync.back')"></button>
+              <span style="flex: 1 1 auto"></span>
+              <button
+                type="button"
+                class="primary"
+                :disabled="syncWizard.busy"
+                @click="finishSync()"
+                x-text="t('web.sync.finish')"
+              ></button>
+            </div>
+          </div>
+        </template>
+      </div>
       </template>
     </dialog>
 
