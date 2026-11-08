@@ -4394,3 +4394,201 @@ web.export.cap_alarm:
 web.export.cap_battery:
   en: "Battery"
   de: "Batterie"
+web.sync.done:
+  en: "The file was written and downloaded. Below is what it holds now: open it in Loxone Config and save it to the Miniserver."
+  de: "Die Datei wurde geschrieben und heruntergeladen. Unten steht, was sie jetzt enthält: Öffne sie in Loxone Config und speichere sie in den Miniserver."
+web.sync.tile_same:
+  en: "devices the same on both sides"
+  de: "Geräte gleich in beiden"
+web.sync.tile_added:
+  en: "only in loxmatter, added to Loxone"
+  de: "nur in loxmatter, kommen nach Loxone"
+web.sync.tile_differs:
+  en: "differences to decide"
+  de: "Unterschiede zu entscheiden"
+web.sync.tile_orphans:
+  en: "only in Loxone, to clean up"
+  de: "nur in Loxone, zum Aufräumen"
+web.sync.in_sync:
+  en: "Loxone and loxmatter are in sync."
+  de: "Loxone und loxmatter sind synchron."
+web.sync.differences_heading:
+  en: "Differences"
+  de: "Unterschiede"
+web.sync.differences_hint:
+  en: "You decide for each device which side is right."
+  de: "Du entscheidest pro Gerät, welche Seite stimmt."
+web.sync.row_room:
+  en: "Room: loxmatter {loxmatter} · Loxone {loxone}"
+  de: "Raum: loxmatter {loxmatter} · Loxone {loxone}"
+web.sync.row_name:
+  en: "Name: loxmatter {loxmatter} · Loxone {loxone}"
+  de: "Name: loxmatter {loxmatter} · Loxone {loxone}"
+web.sync.row_split:
+  en: "Split across rooms in Loxone: {rooms} · stays as it is"
+  de: "In Loxone auf Räume verteilt: {rooms} · bleibt so"
+web.sync.split_pill:
+  en: "deliberately split"
+  de: "bewusst aufgeteilt"
+web.sync.changed_in_loxone:
+  en: "changed in Loxone"
+  de: "in Loxone geändert"
+web.sync.changed_in_loxmatter:
+  en: "changed in loxmatter"
+  de: "in loxmatter geändert"
+web.sync.added_heading:
+  en: "Only in loxmatter"
+  de: "Nur in loxmatter"
+web.sync.goes_to_room:
+  en: "goes to {room}"
+  de: "kommt in: {room}"
+web.sync.row_new_signals:
+  en: "new: {signals}"
+  de: "neu: {signals}"
+web.sync.pill_new:
+  en: "new in Loxone"
+  de: "neu in Loxone"
+web.sync.pill_extended:
+  en: "extended in Loxone"
+  de: "ergänzt in Loxone"
+web.sync.orphans_heading:
+  en: "Only in Loxone"
+  de: "Nur in Loxone"
+web.sync.orphan_removed:
+  en: "removed in loxmatter"
+  de: "in loxmatter entfernt"
+web.sync.orphan_via_group:
+  en: "now switched through the group {groups}"
+  de: "wird jetzt über die Gruppe {groups} geschaltet"
+web.sync.orphan_signal_dropped:
+  en: "signals no longer exported"
+  de: "Signale werden nicht mehr exportiert"
+web.sync.orphan_unlinked:
+  en: "not wired anywhere"
+  de: "nirgends verknüpft"
+web.sync.orphan_linked:
+  en: "wired {count}× on: {pages}"
+  de: "{count}× verknüpft auf: {pages}"
+web.sync.pill_delete_suggested:
+  en: "delete suggested"
+  de: "löschen vorgeschlagen"
+web.sync.pill_kept:
+  en: "kept last time"
+  de: "zuletzt behalten"
+web.sync.start:
+  en: "Start sync"
+  de: "Abgleich starten"
+web.sync.download_without_decisions:
+  en: "Download without deciding"
+  de: "Ohne Entscheidungen herunterladen"
+web.sync.details_heading:
+  en: "All entries in detail"
+  de: "Alle Einträge im Detail"
+web.sync.dialog_heading:
+  en: "Sync with Loxone"
+  de: "Abgleich mit Loxone"
+web.sync.step:
+  en: "Step {step} of 3"
+  de: "Schritt {step} von 3"
+web.sync.question_count:
+  en: "Question {n} of {total}"
+  de: "Frage {n} von {total}"
+web.sync.question_room:
+  en: "Which room is right for “{label}”?"
+  de: "Welcher Raum stimmt für „{label}“?"
+web.sync.question_name:
+  en: "Which name is right for “{label}”?"
+  de: "Welcher Name stimmt für „{label}“?"
+web.sync.side_loxone:
+  en: "Loxone"
+  de: "Loxone"
+web.sync.side_loxmatter:
+  en: "loxmatter"
+  de: "loxmatter"
+web.sync.loxmatter_takes_it:
+  en: "loxmatter takes this over"
+  de: "loxmatter übernimmt das"
+web.sync.loxone_takes_it:
+  en: "Loxone gets this back"
+  de: "Loxone bekommt das zurück"
+web.sync.no_room:
+  en: "no room"
+  de: "kein Raum"
+web.sync.same_for_rest_rooms:
+  en: "Decide the same for all further room differences"
+  de: "Für alle weiteren Raum-Unterschiede genauso entscheiden"
+web.sync.same_for_rest_names:
+  en: "Decide the same for all further name differences"
+  de: "Für alle weiteren Namens-Unterschiede genauso entscheiden"
+web.sync.back:
+  en: "Back"
+  de: "Zurück"
+web.sync.skip:
+  en: "Skip"
+  de: "Überspringen"
+web.sync.take_next:
+  en: "Take over, next"
+  de: "Übernehmen, weiter"
+web.sync.next:
+  en: "Next"
+  de: "Weiter"
+web.sync.orphans_question:
+  en: "These no longer exist in loxmatter"
+  de: "Diese gibt es in loxmatter nicht mehr"
+web.sync.orphans_explain:
+  en: "Their inputs and outputs are still in the Loxone file but no longer work. Ticked ones are deleted from the file, together with their wiring on program pages."
+  de: "Ihre Ein- und Ausgänge stehen noch in der Loxone-Datei, funktionieren aber nicht mehr. Markierte werden aus der Datei gelöscht, samt ihrer Verknüpfungen auf den Programmseiten."
+web.sync.orphan_link_warning:
+  en: "Still wired on: {pages}. Deleting removes these connections; the function blocks themselves stay."
+  de: "Noch verknüpft auf: {pages}. Beim Löschen fallen diese Verbindungen weg, die Bausteine selbst bleiben."
+web.sync.keep_all:
+  en: "Keep all"
+  de: "Alle behalten"
+web.sync.delete_next:
+  en: "Delete {count}, next"
+  de: "{count} löschen, weiter"
+web.sync.summary_heading:
+  en: "What happens now"
+  de: "Das passiert jetzt"
+web.sync.to_loxone:
+  en: "loxmatter → Loxone"
+  de: "loxmatter → Loxone"
+web.sync.to_loxmatter:
+  en: "Loxone → loxmatter"
+  de: "Loxone → loxmatter"
+web.sync.to_loxone_hint:
+  en: "Written into the new file you download."
+  de: "Steht in der neuen Datei, die du herunterlädst."
+web.sync.to_loxmatter_hint:
+  en: "Saved in loxmatter right away."
+  de: "Wird sofort in loxmatter gespeichert."
+web.sync.nothing:
+  en: "Nothing changes."
+  de: "Nichts ändert sich."
+web.sync.summary_room:
+  en: "{label}: room {value}"
+  de: "{label}: Raum {value}"
+web.sync.summary_name:
+  en: "{label}: name {value}"
+  de: "{label}: Name {value}"
+web.sync.summary_new_devices:
+  en: "new devices or groups: {count}"
+  de: "neue Geräte oder Gruppen: {count}"
+web.sync.summary_new_signals:
+  en: "devices with new signals: {count}"
+  de: "Geräte mit neuen Signalen: {count}"
+web.sync.summary_updated:
+  en: "devices updated: {count}"
+  de: "aktualisierte Geräte: {count}"
+web.sync.summary_deleted:
+  en: "devices deleted: {count}"
+  de: "gelöschte Geräte: {count}"
+web.sync.skipped:
+  en: "{count} skipped: they stay different and come up again next time."
+  de: "{count} übersprungen: Sie bleiben unterschiedlich und kommen beim nächsten Abgleich wieder."
+web.sync.finish:
+  en: "Apply and download file"
+  de: "Übernehmen und Datei herunterladen"
+api.errors.projectsync_bad_decisions:
+  en: "The sync decisions could not be read."
+  de: "Die Entscheidungen zum Abgleich konnten nicht gelesen werden."

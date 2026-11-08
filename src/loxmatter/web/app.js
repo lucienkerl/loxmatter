@@ -1484,6 +1484,24 @@ function app() {
       needsMiniserverSelection: false,
       availableMiniservers: [],
       selectedMiniserverIp: "",
+      // Set once the two-way sync was carried out (design 2026-11-08):
+      // the plan shown below is then the comparison of the file just
+      // downloaded, and the page says so.
+      done: false,
+    },
+
+    // The two-way sync's steps (design 2026-11-08, section 6): one card
+    // per difference, then the clean-up, then the summary. `choices` maps
+    // `room:<owner>`/`name:<owner>` to "loxone", "loxmatter" or "skip";
+    // `deletes` maps an orphan prefix (`d8`) to whether it goes.
+    syncWizard: {
+      step: "differences",
+      index: 0,
+      choices: {},
+      sameForRest: false,
+      deletes: {},
+      busy: false,
+      error: "",
     },
 
     // --- Live diagnostics (Spec 10.5) ---------------------------------------
@@ -8748,22 +8766,9 @@ function app() {
       this.projectSync.error = "";
       this.projectSync.busy = true;
       this.projectSync.plan = null;
+      this.projectSync.done = false;
       try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const params = new URLSearchParams({
-          bridge_ip: this.bridgeSettings.bridge_ip,
-          port: String(this.bridgeSettings.udp_port),
-          listen: String(this.bridgeSettings.listen_port),
-        });
-        if (miniserverIp) {
-          params.set("miniserver_ip", miniserverIp);
-        }
-        // For the patched file's "last saved" stamp, which Loxone Config
-        // shows in this browser's local time - the bridge's own clock zone
-        // is usually UTC. `getTimezoneOffset` counts west positive.
-        params.set("utc_offset", String(-new Date().getTimezoneOffset()));
-        const result = await this.upload(`/api/export/project-sync?${params}`, formData);
+        const result = await this._postProjectSync(file, miniserverIp, null, false);
         if (result.needs_miniserver_selection) {
           this.projectSync.needsMiniserverSelection = true;
           this.projectSync.availableMiniservers = result.available_miniservers;
@@ -8777,6 +8782,33 @@ function app() {
       } finally {
         this.projectSync.busy = false;
       }
+    },
+
+    /** One call to `/api/export/project-sync`. `decisions` (the two-way
+     * sync's answers) and `apply` (store them in loxmatter too) are sent
+     * only by the last step of the sync dialog. */
+    async _postProjectSync(file, miniserverIp, decisions, apply) {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (decisions) {
+        formData.append("decisions", JSON.stringify(decisions));
+      }
+      const params = new URLSearchParams({
+        bridge_ip: this.bridgeSettings.bridge_ip,
+        port: String(this.bridgeSettings.udp_port),
+        listen: String(this.bridgeSettings.listen_port),
+      });
+      if (miniserverIp) {
+        params.set("miniserver_ip", miniserverIp);
+      }
+      if (apply) {
+        params.set("apply", "true");
+      }
+      // For the patched file's "last saved" stamp, which Loxone Config
+      // shows in this browser's local time - the bridge's own clock zone
+      // is usually UTC. `getTimezoneOffset` counts west positive.
+      params.set("utc_offset", String(-new Date().getTimezoneOffset()));
+      return await this.upload(`/api/export/project-sync?${params}`, formData);
     },
 
     /**
@@ -9133,7 +9165,11 @@ function app() {
       if (!this.projectSync.plan) {
         return;
       }
-      const blob = blobFromBase64(this.projectSync.plan.patched_base64, "application/xml");
+      this._saveProjectFile(this.projectSync.plan.patched_base64);
+    },
+
+    _saveProjectFile(base64) {
+      const blob = blobFromBase64(base64, "application/xml");
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -9143,6 +9179,271 @@ function app() {
       // (Firefox) only start the download of an object URL after the
       // current call stack.
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    },
+
+    // ---------------------------------------------------------------------
+    // Two-way sync (design 2026-11-08)
+    // ---------------------------------------------------------------------
+
+    /** The plan's owners grouped by what happens to them: `same` (all
+     * objects match), `added` (new objects in Loxone, one row per owner),
+     * `updated` (only managed attributes change). */
+    syncOwners() {
+      const plan = this.projectSync.plan;
+      const owners = new Map();
+      if (!plan) return { same: 0, added: [], updated: 0 };
+      for (const entry of plan.entries) {
+        if (entry.status === "orphaned") continue;
+        const key = `${entry.owner_kind}:${entry.device_id}`;
+        if (!owners.has(key)) {
+          owners.set(key, { key, label: entry.device_label, newDevice: false, newSignals: [], updated: false, room: null });
+        }
+        const owner = owners.get(key);
+        if (entry.status === "new_device") owner.newDevice = true;
+        if (entry.status === "new_signal") owner.newSignals.push(entry.title);
+        if (entry.status === "updated") owner.updated = true;
+        if ((entry.status === "new_device" || entry.status === "new_signal") && entry.target_room) {
+          owner.room = entry.target_room;
+        }
+      }
+      const differing = new Set(this.syncDifferences().map((d) => d.owner));
+      const added = [];
+      let same = 0;
+      let updated = 0;
+      for (const owner of owners.values()) {
+        if (owner.newDevice || owner.newSignals.length > 0) added.push(owner);
+        else if (owner.updated) updated += 1;
+        else if (!differing.has(owner.key)) same += 1;
+      }
+      return { same, added, updated };
+    },
+
+    /** Every question of the first step, rooms before names. */
+    syncDifferences() {
+      const plan = this.projectSync.plan;
+      if (!plan) return [];
+      const rooms = (plan.room_differences || []).map((d) => ({
+        id: `room:${d.owner}`,
+        type: "room",
+        owner: d.owner,
+        label: d.label,
+        loxone: d.loxone,
+        loxmatter: d.loxmatter,
+        preselect: d.preselect,
+      }));
+      const names = (plan.name_differences || []).map((d) => ({
+        id: `name:${d.owner}`,
+        type: "name",
+        owner: d.owner,
+        label: d.loxmatter,
+        loxone: d.loxone,
+        loxmatter: d.loxmatter,
+        preselect: d.preselect,
+      }));
+      return [...rooms, ...names];
+    },
+
+    syncOrphans() {
+      return (this.projectSync.plan && this.projectSync.plan.orphans) || [];
+    },
+
+    /** Whether there is anything to decide - otherwise the plain download
+     * stays the one action. */
+    syncHasQuestions() {
+      return this.syncDifferences().length > 0 || this.syncOrphans().length > 0;
+    },
+
+    /** How the overview names a room value; `null` is "no room". */
+    syncRoomText(room) {
+      return room || t("web.sync.no_room");
+    },
+
+    syncOrphanReason(orphan) {
+      if (orphan.reason === "via_group") {
+        return t("web.sync.orphan_via_group", { groups: orphan.group_labels.join(", ") });
+      }
+      if (orphan.reason === "signal_dropped") {
+        return t("web.sync.orphan_signal_dropped");
+      }
+      return t("web.sync.orphan_removed");
+    },
+
+    syncOrphanLinks(orphan) {
+      const pages = [...new Set(orphan.links.map((link) => link.page).filter(Boolean))];
+      if (orphan.links.length === 0) return t("web.sync.orphan_unlinked");
+      return t("web.sync.orphan_linked", { count: orphan.links.length, pages: pages.join(", ") });
+    },
+
+    openSyncWizard() {
+      const choices = {};
+      for (const difference of this.syncDifferences()) {
+        choices[difference.id] = difference.preselect;
+      }
+      const deletes = {};
+      for (const orphan of this.syncOrphans()) {
+        deletes[orphan.prefix] = orphan.delete_by_default;
+      }
+      this.syncWizard = {
+        step: this.syncDifferences().length > 0 ? "differences" : this.syncOrphans().length > 0 ? "orphans" : "summary",
+        index: 0,
+        choices,
+        sameForRest: false,
+        deletes,
+        busy: false,
+        error: "",
+      };
+      this.$nextTick(() => this.$refs.syncDialog.showModal());
+    },
+
+    closeSyncWizard() {
+      this.$refs.syncDialog.close();
+    },
+
+    syncCurrentDifference() {
+      return this.syncDifferences()[this.syncWizard.index] || null;
+    },
+
+    syncChoose(side) {
+      const current = this.syncCurrentDifference();
+      if (current) this.syncWizard.choices[current.id] = side;
+    },
+
+    /** "Take over, next" or "Skip": records the answer (and, with the
+     * box ticked, the same answer for every later question of the same
+     * kind), then moves on. */
+    syncNext(skip) {
+      const differences = this.syncDifferences();
+      const current = differences[this.syncWizard.index];
+      if (current) {
+        if (skip) this.syncWizard.choices[current.id] = "skip";
+        if (this.syncWizard.sameForRest) {
+          const answer = this.syncWizard.choices[current.id];
+          for (const later of differences.slice(this.syncWizard.index + 1)) {
+            if (later.type === current.type) this.syncWizard.choices[later.id] = answer;
+          }
+          this.syncWizard.index = differences.findIndex(
+            (d, i) => i > this.syncWizard.index && d.type !== current.type,
+          );
+          this.syncWizard.sameForRest = false;
+          if (this.syncWizard.index < 0) this.syncWizard.index = differences.length;
+        } else {
+          this.syncWizard.index += 1;
+        }
+      }
+      if (this.syncWizard.index >= differences.length) {
+        this.syncWizard.step = this.syncOrphans().length > 0 ? "orphans" : "summary";
+      }
+    },
+
+    syncBack() {
+      if (this.syncWizard.step === "summary") {
+        if (this.syncOrphans().length > 0) {
+          this.syncWizard.step = "orphans";
+          return;
+        }
+        this.syncWizard.step = "differences";
+        this.syncWizard.index = Math.max(0, this.syncDifferences().length - 1);
+        return;
+      }
+      if (this.syncWizard.step === "orphans") {
+        this.syncWizard.step = "differences";
+        this.syncWizard.index = Math.max(0, this.syncDifferences().length - 1);
+        return;
+      }
+      this.syncWizard.index = Math.max(0, this.syncWizard.index - 1);
+    },
+
+    syncStepNumber() {
+      return { differences: 1, orphans: 2, summary: 3 }[this.syncWizard.step];
+    },
+
+    syncDeleteCount() {
+      return Object.values(this.syncWizard.deletes).filter(Boolean).length;
+    },
+
+    syncKeepAll() {
+      for (const prefix of Object.keys(this.syncWizard.deletes)) {
+        this.syncWizard.deletes[prefix] = false;
+      }
+      this.syncWizard.step = "summary";
+    },
+
+    /** The request body's `decisions`, from the dialog's answers. */
+    syncDecisions() {
+      const decisions = { rooms: {}, names: {}, delete: [] };
+      for (const [id, side] of Object.entries(this.syncWizard.choices)) {
+        if (side === "skip") continue;
+        const [type, ...owner] = id.split(":");
+        decisions[type === "room" ? "rooms" : "names"][owner.join(":")] = side;
+      }
+      decisions.delete = Object.entries(this.syncWizard.deletes)
+        .filter(([, chosen]) => chosen)
+        .map(([prefix]) => prefix);
+      return decisions;
+    },
+
+    /** The summary's two columns: what goes into the file, what changes
+     * in loxmatter, and how many were skipped. */
+    syncSummary() {
+      const toLoxone = [];
+      const toLoxmatter = [];
+      let skipped = 0;
+      for (const difference of this.syncDifferences()) {
+        const side = this.syncWizard.choices[difference.id];
+        if (side === "skip") {
+          skipped += 1;
+          continue;
+        }
+        const key = difference.type === "room" ? "web.sync.summary_room" : "web.sync.summary_name";
+        const value = side === "loxone" ? difference.loxone : difference.loxmatter;
+        const line = t(key, {
+          label: difference.label,
+          value: difference.type === "room" ? this.syncRoomText(value) : value,
+        });
+        (side === "loxone" ? toLoxmatter : toLoxone).push(line);
+      }
+      const owners = this.syncOwners();
+      const newDevices = owners.added.filter((o) => o.newDevice).length;
+      const newSignals = owners.added.filter((o) => !o.newDevice).length;
+      if (newDevices > 0) toLoxone.unshift(t("web.sync.summary_new_devices", { count: newDevices }));
+      if (newSignals > 0) toLoxone.unshift(t("web.sync.summary_new_signals", { count: newSignals }));
+      if (owners.updated > 0) toLoxone.push(t("web.sync.summary_updated", { count: owners.updated }));
+      const deleted = this.syncDeleteCount();
+      if (deleted > 0) toLoxone.push(t("web.sync.summary_deleted", { count: deleted }));
+      return { toLoxone, toLoxmatter, skipped };
+    },
+
+    /** The last step: the bridge writes the file with every answer,
+     * stores the "Loxone is right" ones, and the browser downloads the
+     * result. The file just written is then read back in, so the page
+     * shows the state both sides are now in rather than the old file's. */
+    async finishSync() {
+      const file = this.projectSync.file;
+      if (!file || this.syncWizard.busy) return;
+      this.syncWizard.busy = true;
+      this.syncWizard.error = "";
+      try {
+        const result = await this._postProjectSync(
+          file,
+          this.projectSync.selectedMiniserverIp || null,
+          this.syncDecisions(),
+          true,
+        );
+        this._saveProjectFile(result.patched_base64);
+        const patched = new File(
+          [blobFromBase64(result.patched_base64, "application/xml")],
+          "loxmatter-project-patched.Loxone",
+        );
+        this.projectSync.file = patched;
+        this.closeSyncWizard();
+        await this._syncProjectFile(patched, this.projectSync.selectedMiniserverIp || null);
+        this.projectSync.done = true;
+        await Promise.all([this.loadDevices(), this.loadGroups(), this.loadExportOverview()]);
+      } catch (error) {
+        this.syncWizard.error = t("web.export.projectsync_upload_failed", { message: error.message });
+      } finally {
+        this.syncWizard.busy = false;
+      }
     },
 
     // ---------------------------------------------------------------------

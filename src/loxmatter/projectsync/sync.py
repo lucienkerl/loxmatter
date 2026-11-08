@@ -21,7 +21,7 @@ intermediate state on the server)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 
 from loxmatter import i18n
@@ -30,21 +30,54 @@ from loxmatter.model.store import (
     Store,
     StoredCommand,
     StoredDevice,
+    StoredGroup,
     StoredGroupCommand,
     StoredSignal,
 )
+from loxmatter.model.sync_baseline_store import OwnerBaseline, SyncBaseline
 from loxmatter.projectsync.diff import SyncPlan, build_plan
-from loxmatter.projectsync.index import ProjectFormatError, build_index
+from loxmatter.projectsync.index import ProjectFormatError, ProjectIndex, build_index
 from loxmatter.projectsync.patch import apply_plan
+from loxmatter.projectsync.reconcile import (
+    Owner,
+    Reconciliation,
+    SyncDecisions,
+    container_titles,
+    find_differences,
+    find_orphans,
+    new_entry_room,
+)
 from loxmatter.projectsync.savedate import recorded_utc_offset
 
-__all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
+__all__ = ["ProjectFormatError", "ProjectSyncResult", "apply_decisions_to_store", "run_sync"]
 
 
 @dataclass(frozen=True)
 class ProjectSyncResult:
     plan: SyncPlan
     patched: bytes
+    reconciliation: Reconciliation = field(default_factory=Reconciliation)
+    decisions: SyncDecisions = field(default_factory=SyncDecisions)
+
+
+def _default_room_title(index: ProjectIndex) -> str | None:
+    """The title of Loxone's default room - where an object goes when the
+    user decides it belongs in no room, as loxmatter has it."""
+    return next(
+        (p.attrs.get("Title") for p in index.places if p.attrs.get("First") == "true"), None
+    )
+
+
+def _decided_owner(owner: Owner, reconciliation: Reconciliation, decisions: SyncDecisions) -> Owner:
+    """`owner` as it will be once the user's "Loxone is right" choices are
+    stored."""
+    for difference in reconciliation.rooms:
+        if difference.owner.ref == owner.ref and decisions.rooms.get(owner.ref) == "loxone":
+            owner = replace(owner, room=difference.loxone)
+    for name in reconciliation.names:
+        if name.owner.ref == owner.ref and decisions.names.get(owner.ref) == "loxone":
+            owner = replace(owner, label=name.loxone)
+    return owner
 
 
 def run_sync(
@@ -57,6 +90,8 @@ def run_sync(
     miniserver_ip: str | None = None,
     utc_offset: timedelta | None = None,
     now: datetime | None = None,
+    decisions: SyncDecisions | None = None,
+    baseline: SyncBaseline | None = None,
 ) -> ProjectSyncResult:
     """`miniserver_ip` selects the `LoxLIVE` block (= Miniserver) to compare
     against, if the project file has several configured (see
@@ -68,7 +103,17 @@ def run_sync(
     no substitute: in a container it is usually UTC. Without one, the
     offset the file itself last recorded stands in - right unless the
     clocks changed in between - and UTC only when the file records none.
-    `now` exists for tests."""
+    `now` exists for tests.
+
+    `decisions` are the user's answers to the two-way sync's questions
+    (design 2026-11-08); without them, every difference is skipped and
+    nothing is deleted, which is what the first, read-only look at a file
+    gets. The decisions shape the file only - `apply_decisions_to_store`
+    carries the "Loxone is right" ones into loxmatter. `baseline` defaults
+    to the store's."""
+    decisions = decisions or SyncDecisions()
+    if baseline is None:
+        baseline = store.sync_baseline.get()
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -107,6 +152,33 @@ def run_sync(
     commands_by_group: dict[int, Sequence[StoredGroupCommand]] = {
         group.id: store.group_commands(group.id) for group in groups
     }
+
+    owners = [Owner("device", d.id, d.label, d.room) for d in devices] + [
+        Owner("group", g.id, g.label, g.room) for g in groups
+    ]
+    reconciliation = find_differences(index, owners, baseline)
+    decided = {o.ref: _decided_owner(o, reconciliation, decisions) for o in owners}
+    devices = [_with_owner(d, decided[f"device:{d.id}"]) for d in devices]
+    groups = [_with_owner(g, decided[f"group:{g.id}"]) for g in groups]
+
+    room_overrides = {
+        (o.kind, o.id): new_entry_room(o, reconciliation, decisions) for o in decided.values()
+    }
+    default_room = _default_room_title(index)
+    room_moves: dict[str, str] = {}
+    renames: dict[int, str] = {}
+    for difference in reconciliation.rooms:
+        ref = difference.owner.ref
+        if decisions.rooms.get(ref) == "loxmatter":
+            target = difference.owner.room or default_room
+            if target:
+                room_moves[difference.owner.prefix] = target
+    for name in reconciliation.names:
+        choice = decisions.names.get(name.owner.ref)
+        if choice is not None:
+            new_name = name.loxone if choice == "loxone" else name.owner.label
+            renames.update(container_titles(index, name.owner, new_name))
+
     plan = build_plan(
         index,
         devices,
@@ -117,7 +189,25 @@ def run_sync(
         bridge_ip=bridge_ip,
         port=port,
         listen=listen,
+        room_overrides=room_overrides,
+        extra_room_names=list(room_moves.values()),
     )
+
+    all_groups = store.groups()
+    groups_of_device: dict[int, list[str]] = {}
+    for group in all_groups:
+        for member in store.group_members(group.id):
+            groups_of_device.setdefault(member.id, []).append(group.label)
+    orphans = find_orphans(
+        index,
+        plan.entries,
+        device_labels={d.id: d.label for d in store.devices()},
+        group_labels={g.id: g.label for g in all_groups},
+        groups_of_device=groups_of_device,
+        exported_devices={d.id for d in devices},
+        kept=baseline.kept,
+    )
+    reconciliation = replace(reconciliation, orphans=orphans)
     # A `ProjectFormatError` from `_installation_suffix` (finding N1 from
     # the re-review: via `apply_plan` -> `_new_signal_edit`/
     # `_new_device_edit` -> `new_unique_id`, as soon as an entry needs a
@@ -141,5 +231,61 @@ def run_sync(
         port=port,
         listen=listen,
         saved_at=saved_at,
+        room_moves=room_moves,
+        renames=renames,
+        deletions=decisions.delete,
     )
-    return ProjectSyncResult(plan, patched)
+    return ProjectSyncResult(plan, patched, reconciliation, decisions)
+
+
+def _with_owner[T: (StoredDevice, StoredGroup)](stored: T, owner: Owner) -> T:
+    if stored.label == owner.label and stored.room == owner.room:
+        return stored
+    return replace(stored, label=owner.label, room=owner.room)
+
+
+def apply_decisions_to_store(store: Store, result: ProjectSyncResult) -> None:
+    """Stores the "Loxone is right" choices in loxmatter and records the
+    new baseline (design 2026-11-08, section 4) - called once the user has
+    taken the patched file, never on the first look at a file.
+
+    An owner the user skipped keeps its old baseline, so the next sync
+    still knows which side had moved."""
+    reconciliation, decisions = result.reconciliation, result.decisions
+    for difference in reconciliation.rooms:
+        if decisions.rooms.get(difference.owner.ref) != "loxone":
+            continue
+        if difference.owner.kind == "group":
+            store.set_group_room(difference.owner.id, difference.loxone)
+        else:
+            store.set_room(difference.owner.id, difference.loxone)
+    for name in reconciliation.names:
+        if decisions.names.get(name.owner.ref) != "loxone":
+            continue
+        if name.owner.kind == "group":
+            store.rename_group(name.owner.id, name.loxone)
+        else:
+            store.rename_device(name.owner.id, name.loxone)
+
+    before = store.sync_baseline.get()
+    skipped_rooms = {
+        d.owner.ref for d in reconciliation.rooms if d.owner.ref not in decisions.rooms
+    }
+    skipped_names = {
+        n.owner.ref for n in reconciliation.names if n.owner.ref not in decisions.names
+    }
+    owners: dict[str, OwnerBaseline] = dict(before.owners)
+    member_ids = store.group_member_ids()
+    current = [
+        Owner("device", d.id, d.label, d.room)
+        for d in store.devices()
+        if exports_on_its_own(export_mode(d, member_ids))
+    ] + [Owner("group", g.id, g.label, g.room) for g in store.groups()]
+    for owner in current:
+        old = before.owners.get(owner.ref)
+        owners[owner.ref] = OwnerBaseline(
+            room=(old.room if old else None) if owner.ref in skipped_rooms else owner.room,
+            name=(old.name if old else None) if owner.ref in skipped_names else owner.label,
+        )
+    kept = frozenset(o.prefix for o in reconciliation.orphans if o.prefix not in decisions.delete)
+    store.sync_baseline.set(SyncBaseline(owners, kept))

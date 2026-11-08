@@ -32,6 +32,10 @@ Config has no such room yet, the sync creates it.
   user who moves an object to another room in Config is never overridden.
   The price: moving a device to another room in loxmatter does not reach
   objects that already exist; the user moves them in Config.
+  *Update 2026-11-08:* the two-way sync (design
+  `2026-11-08-two-way-project-sync-design.md`) now reads the room of
+  existing objects, asks when they all differ from loxmatter's, and writes
+  them only when the user picks loxmatter's room.
 - **No Loxone rooms in loxmatter.** The rooms read from the project file
   are used for matching during one sync request and are not stored.
   loxmatter keeps having no room table (devices tab design, section 3.2),

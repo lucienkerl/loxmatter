@@ -359,8 +359,17 @@ def build_plan(
     bridge_ip: str | None = None,
     port: int | None = None,
     listen: int | None = None,
+    room_overrides: Mapping[tuple[str, int], str | None] | None = None,
+    extra_room_names: Sequence[str] = (),
 ) -> SyncPlan:
-    """`bridge_ip`, `port` and `listen` are the address new containers get
+    """`room_overrides` sets the room new objects of an owner
+    (`(owner_kind, id)`) go into instead of its loxmatter room, and
+    `extra_room_names` are rooms the plan must find or create although no
+    new object needs them - both from the two-way sync (design
+    2026-11-08): new signals join the room their siblings share in Loxone,
+    and existing objects can move into loxmatter's room.
+
+    `bridge_ip`, `port` and `listen` are the address new containers get
     (`patch._new_device_edit`). Given, every EXISTING container is compared
     against the same address too, so a changed IP or port reaches the
     whole file and not only what this sync creates. Without them - a plan
@@ -421,11 +430,14 @@ def build_plan(
         ("device", device.id): device.room for device in devices
     }
     owner_rooms.update({("group", group.id): group.room for group in groups})
+    owner_rooms.update(room_overrides or {})
     entries = [
         _with_owner_room(entry, owner_rooms.get((entry.owner_kind, entry.device_id)))
         for entry in entries
     ]
 
     entries += _orphaned_entries(index, known_input_keys, known_output_keys)
-    rooms = assign_rooms(index, [entry.room for entry in entries if entry.room is not None])
+    rooms = assign_rooms(
+        index, [entry.room for entry in entries if entry.room is not None] + list(extra_room_names)
+    )
     return SyncPlan(entries, rooms)

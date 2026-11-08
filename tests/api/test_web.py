@@ -4050,7 +4050,7 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     )
     assert "unveränderte Signale anzeigen" not in markup
 
-    assert "x-text=\"t('web.export.projectsync_download_button')\"" in markup
+    assert "t('web.export.projectsync_download_button')" in markup
     assert "Gepatchte Datei herunterladen<" not in markup
 
 
@@ -5366,8 +5366,9 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 7
+    assert markup.count("<dialog") == 8
     assert 'x-ref="signalsModal"' in markup
+    assert 'x-ref="syncDialog"' in markup
     assert 'x-ref="controlModal"' in markup
     assert 'x-ref="groupDialog"' in markup
     assert 'x-ref="expertModal"' in markup

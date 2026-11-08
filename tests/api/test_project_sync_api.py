@@ -456,3 +456,60 @@ async def test_project_sync_writes_only_the_inputs_of_a_status_member(api):
         e["kind"] for e in entries if e["owner_kind"] == "device" and e["status"] != "orphaned"
     }
     assert device_kinds == {"input"}
+
+
+# The plug's output container, renamed by hand in Loxone Config.
+RENAMED_PROJECT = SAMPLE_PROJECT.replace(
+    '<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa"></C>',
+    '<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">'
+    '<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Grill" Address="http://10.0.0.5:8080">'
+    '<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="on" CmdOn="/cmd/d1_1_on/1"><Co K="I" U="1000-000d-0000-bbbbbbbbbbbbbbbb"/>'
+    "</C></C></C>",
+)
+
+
+async def _post_renamed(client, *, decisions=None, apply=False):
+    params = {"bridge_ip": "10.0.0.5", "port": "7000", "listen": "8080"}
+    if apply:
+        params["apply"] = "true"
+    data = {} if decisions is None else {"decisions": decisions}
+    return await client.post(
+        "/api/export/project-sync",
+        params=params,
+        data=data,
+        files={"file": ("p.Loxone", RENAMED_PROJECT.encode("utf-8"), "application/xml")},
+    )
+
+
+async def test_project_sync_reports_a_name_changed_in_loxone(api):
+    client, store = api
+    response = await _post_renamed(client)
+    assert response.status_code == 200
+    [name] = response.json()["name_differences"]
+    assert name == {
+        "owner": "device:1",
+        "loxone": "Grill",
+        "loxmatter": store.device(1).label,
+        "preselect": "loxone",
+    }
+    assert response.json()["applied"] is False
+
+
+async def test_project_sync_stores_decisions_only_with_apply(api):
+    client, store = api
+    decisions = '{"names": {"device:1": "loxone"}}'
+    await _post_renamed(client, decisions=decisions)
+    assert store.device(1).label != "Grill"
+    response = await _post_renamed(client, decisions=decisions, apply=True)
+    assert response.json()["applied"] is True
+    assert store.device(1).label == "Grill"
+
+
+async def test_project_sync_rejects_unreadable_decisions(api):
+    client, _store = api
+    response = await _post_renamed(client, decisions='{"names": {"device:1": "both"}}')
+    assert response.status_code == 400
+    response = await _post_renamed(client, decisions="not json")
+    assert response.status_code == 400

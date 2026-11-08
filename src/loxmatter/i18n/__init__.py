@@ -133,6 +133,13 @@ def raw_template(key: str) -> str:
     return entry.get(_current_language, entry["en"])
 
 
+def all_templates(key: str) -> list[str]:
+    """Every language's unresolved template for `key`, each once - for
+    recognising text loxmatter wrote under whichever language was active
+    then, such as a group container's title in a Loxone project file."""
+    return list(dict.fromkeys(_STRINGS[key].values()))
+
+
 def strings_with_prefix(prefix: str) -> list[str]:
     """All keys that start with `prefix` - for `api/language.py`'s
     `GET /api/i18n`, which delivers only the `web.*` namespace to the
