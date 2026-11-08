@@ -190,3 +190,79 @@ def test_a_title_renamed_in_loxone_config_survives_the_next_sync(tmp_path):
     kept = second.patched.decode("utf-8-sig")
     assert 'Title="Spannung Küche"' in kept
     assert 'Title="Umschalten"' in kept
+
+
+def _containers(patched: bytes) -> tuple[str, str]:
+    """The start tags of the one `VirtualUdpIn` and the one `VirtualOut`
+    container in a patched file."""
+    text = patched.decode("utf-8-sig")
+    tags = [text[i : text.index(">", i) + 1] for i in range(len(text)) if text.startswith("<C ", i)]
+    udp_in = next(tag for tag in tags if 'Type="VirtualUdpIn"' in tag)
+    out = next(tag for tag in tags if 'Type="VirtualOut"' in tag)
+    return udp_in, out
+
+
+def test_a_changed_port_reaches_containers_that_already_exist(tmp_path):
+    """User report, 2026-11-08: the bridge moved from port 8080 to 8083,
+    the port was corrected in the settings and the project file read in
+    again - and every device's outputs still pointed at :8080. The address
+    of an existing container used to be written only when the container
+    was created. It is now planned and patched like any other attribute."""
+    store = _plug_store(tmp_path)
+    first = run_sync(
+        NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
+        store,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    )
+    udp_in, out = _containers(first.patched)
+    assert 'Address="10.0.0.5"' in udp_in and 'Port="7000"' in udp_in
+    assert 'Address="http://10.0.0.5:8080"' in out
+
+    second = run_sync(first.patched, store, bridge_ip="10.0.0.5", port=7001, listen=8083)
+
+    changed = [entry for entry in second.plan.entries if entry.status.value != "unchanged"]
+    assert {(entry.kind, entry.key) for entry in changed} == {
+        ("input", "d1_container"),
+        ("output", "d1_container"),
+    }
+    by_kind = {entry.kind: entry for entry in changed}
+    assert by_kind["input"].changes == {"Port": ("7000", "7001")}
+    assert by_kind["output"].changes == {
+        "Address": ("http://10.0.0.5:8080", "http://10.0.0.5:8083")
+    }
+    assert second.plan.has_changes
+    udp_in, out = _containers(second.patched)
+    assert 'Port="7001"' in udp_in
+    assert 'Address="http://10.0.0.5:8083"' in out
+
+    third = run_sync(second.patched, store, bridge_ip="10.0.0.5", port=7001, listen=8083)
+    store.close()
+    assert not third.plan.has_changes
+
+
+def test_a_changed_bridge_ip_keeps_the_containers_title(tmp_path):
+    """Only the address moves: a container renamed in Loxone Config keeps
+    its name, the same rule as for a command's title."""
+    store = _plug_store(tmp_path)
+    first = run_sync(
+        NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
+        store,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    )
+    _, out = _containers(first.patched)
+    old_title = out.split('Title="', 1)[1].split('"', 1)[0]
+    renamed = first.patched.decode("utf-8-sig").replace(
+        f'Title="{old_title}"', 'Title="Steckdose Küche"'
+    )
+
+    second = run_sync(renamed.encode("utf-8"), store, bridge_ip="10.0.0.6", port=7000, listen=8080)
+    store.close()
+
+    udp_in, out = _containers(second.patched)
+    assert 'Address="10.0.0.6"' in udp_in
+    assert 'Address="http://10.0.0.6:8080"' in out
+    assert 'Title="Steckdose Küche"' in out

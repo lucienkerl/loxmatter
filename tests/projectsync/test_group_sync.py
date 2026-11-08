@@ -370,3 +370,26 @@ def test_a_new_group_output_carries_the_groups_room(rooms_project, group_store):
     new = [e for e in plan.entries if e.owner_kind == "group"]
     assert new and all(e.room == "Küche" for e in new)
     assert [a.status for a in plan.rooms] == [RoomStatus.FOUND]
+
+
+def test_a_groups_container_follows_a_changed_port(sample_project, group_store):
+    """A group's `VirtualOut` carries the bridge's address like a device's
+    does, so a changed HTTP port has to reach it as well."""
+    from loxmatter.projectsync.sync import run_sync
+
+    store, group = group_store
+    first = run_sync(
+        sample_project.encode("utf-8"), store, bridge_ip="10.0.0.5", port=7000, listen=8080
+    )
+    assert f"/cmd/g{group.id}_".encode() in first.patched
+
+    second = run_sync(first.patched, store, bridge_ip="10.0.0.5", port=7000, listen=8083)
+
+    group_rows = [
+        entry
+        for entry in second.plan.entries
+        if entry.owner_kind == "group" and entry.status.value == "updated"
+    ]
+    assert [entry.key for entry in group_rows] == [f"g{group.id}_container"]
+    assert group_rows[0].changes == {"Address": ("http://10.0.0.5:8080", "http://10.0.0.5:8083")}
+    assert b'Address="http://10.0.0.5:8080"' not in second.patched

@@ -607,6 +607,9 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(i18n.t("cli.common.fail_store_open", path=resolved_store_path, exc=exc))
 
+    # The port this process listens on is the one exported command URLs
+    # must name - never a stored setting (see `use_listen_port`).
+    store.settings.use_listen_port(listen)
     _warn_if_no_password(store)
     asyncio.run(
         _run(

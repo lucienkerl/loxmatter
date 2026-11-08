@@ -75,6 +75,18 @@ class BridgeSettingsStore:
         self._db = db
         self._default_udp_port = default_udp_port
         self._default_listen_port = default_listen_port
+        self._running_listen_port: int | None = None
+
+    def use_listen_port(self, port: int) -> None:
+        """The HTTP port `loxmatter run` actually listens on (`--listen`,
+        from `LOXMATTER_PORT` in the installation's `.env`).
+
+        It wins over anything stored: the command URLs the export writes
+        must point where the bridge listens, and a stored value can only be
+        wrong. It used to be a settings field, and the setup assistant
+        saved its form default 8080 on a bridge running on 8083 - every
+        exported output then pointed at a port nobody listened on."""
+        self._running_listen_port = port
 
     def get(self) -> BridgeSettings:
         rows = self._db.execute(
@@ -87,7 +99,9 @@ class BridgeSettingsStore:
             udp_port=int(values[_BRIDGE_UDP_PORT_KEY])
             if _BRIDGE_UDP_PORT_KEY in values
             else self._default_udp_port,
-            listen_port=int(values[_BRIDGE_LISTEN_PORT_KEY])
+            listen_port=self._running_listen_port
+            if self._running_listen_port is not None
+            else int(values[_BRIDGE_LISTEN_PORT_KEY])
             if _BRIDGE_LISTEN_PORT_KEY in values
             else self._default_listen_port,
             miniserver_ip=values.get(_MINISERVER_IP_KEY),

@@ -1054,6 +1054,11 @@ projectsync.multiple_miniservers:
 projectsync.miniserver_without_configuration:
   en: "The Miniserver “{title}” has no configuration whatsoever in this project file yet - no place a virtual input/output could be created in."
   de: "Der Miniserver „{title}“ hat in dieser Projektdatei noch keinerlei Konfiguration - kein Ort, an dem sich ein virtueller Ein-/Ausgang anlegen liesse."
+projectsync.container_address_title:
+  # The title of a plan row that moves an existing device's or group's
+  # virtual input/output container to the bridge's current address.
+  en: "Bridge address"
+  de: "Adresse der Bridge"
 projectsync.no_uid_found:
   en: "No existing U-ID in the expected format was found in the file, from which an installation suffix could be derived."
   de: "Keine bestehende U-ID im erwarteten Format in der Datei gefunden, aus der sich ein Installations-Suffix ableiten liesse."
@@ -2995,6 +3000,9 @@ web.settings.udp_port_label:
 web.settings.http_port_label:
   en: "HTTP port (receiving commands)"
   de: "HTTP-Port (Befehle empfangen)"
+web.settings.http_port_hint:
+  en: "The HTTP port is the one the bridge listens on, set at installation (LOXMATTER_PORT). Exported outputs always use it."
+  de: "Der HTTP-Port ist der, auf dem die Bridge lauscht, festgelegt bei der Installation (LOXMATTER_PORT). Exportierte Ausgänge verwenden immer ihn."
 web.settings.save:
   en: "Save"
   de: "Speichern"
@@ -3621,6 +3629,12 @@ web.export.projectsync_attr_cmd_on:
 web.export.projectsync_attr_cmd_off:
   en: "Command off"
   de: "Befehl Aus"
+web.export.projectsync_attr_address:
+  en: "Address"
+  de: "Adresse"
+web.export.projectsync_attr_port:
+  en: "Port"
+  de: "Port"
 web.export.projectsync_download_button:
   en: "Download patched file"
   de: "Gepatchte Datei herunterladen"
@@ -4193,3 +4207,180 @@ web.setup.restart_text:
 web.setup.restart_button:
   en: "Run the assistant again"
   de: "Assistent erneut starten"
+# --- Export overview by room (design 2026-11-07) ----------------------------
+web.export.overview_search_label:
+  en: "Search the export"
+  de: "Export durchsuchen"
+web.export.overview_search_placeholder:
+  en: "Search device, group, room or value"
+  de: "Gerät, Gruppe, Raum oder Wert suchen"
+web.export.overview_filter_label:
+  en: "Show"
+  de: "Anzeige"
+web.export.overview_filter_all:
+  en: "All"
+  de: "Alle"
+web.export.overview_filter_changed:
+  en: "Changed only ({count})"
+  de: "Nur geändert ({count})"
+web.export.overview_no_room:
+  en: "No room"
+  de: "Ohne Raum"
+web.export.overview_room_groups_one:
+  en: "1 group"
+  de: "1 Gruppe"
+web.export.overview_room_groups_many:
+  en: "{count} groups"
+  de: "{count} Gruppen"
+web.export.overview_room_devices_one:
+  en: "1 device"
+  de: "1 Gerät"
+web.export.overview_room_devices_many:
+  en: "{count} devices"
+  de: "{count} Geräte"
+web.export.overview_room_changed:
+  en: "{count} changed"
+  de: "{count} geändert"
+web.export.overview_room_current:
+  en: "Up to date"
+  de: "Aktuell"
+web.export.overview_group_sub:
+  en: "Group · {members}"
+  de: "Gruppe · {members}"
+web.export.overview_members_heading:
+  en: "Devices in this group ({count})"
+  de: "Geräte dieser Gruppe ({count})"
+web.export.overview_members_all_via_group:
+  en: "switched only through the group"
+  de: "nur über die Gruppe geschaltet"
+web.export.overview_members_some_own:
+  en: "{count} of them also on their own"
+  de: "davon {count} auch einzeln"
+web.export.overview_mode_label:
+  en: "Export of {label}"
+  de: "Export von {label}"
+web.export.overview_mode_group:
+  en: "Only through the group"
+  de: "Nur über die Gruppe"
+web.export.overview_mode_status:
+  en: "Status values only"
+  de: "Nur Status-Werte"
+web.export.overview_mode_full:
+  en: "Complete, on its own"
+  de: "Komplett einzeln"
+web.export.overview_mode_failed:
+  en: "Could not change the export: {message}"
+  de: "Export konnte nicht geändert werden: {message}"
+web.export.overview_more:
+  en: "+{count}"
+  de: "+{count}"
+web.export.overview_to_loxone:
+  en: "Value to Loxone"
+  de: "Wert an Loxone"
+web.export.overview_from_loxone:
+  en: "Command from Loxone"
+  de: "Befehl von Loxone"
+web.export.overview_nothing:
+  en: "Nothing exported"
+  de: "Nichts exportiert"
+web.export.overview_empty:
+  en: "No devices yet."
+  de: "Noch keine Geräte."
+web.export.overview_no_match:
+  en: "Nothing matches."
+  de: "Nichts gefunden."
+web.export.overview_load_error:
+  en: "Could not load the export overview: {message}"
+  de: "Export-Übersicht konnte nicht geladen werden: {message}"
+web.export.overview_bridge_line:
+  en: "Miniserver {miniserver} · Bridge {bridge}"
+  de: "Miniserver {miniserver} · Bridge {bridge}"
+web.export.overview_not_set:
+  en: "not set"
+  de: "nicht hinterlegt"
+web.export.summary_heading:
+  en: "Summary"
+  de: "Zusammenfassung"
+web.export.summary_groups:
+  en: "Groups"
+  de: "Gruppen"
+web.export.summary_devices:
+  en: "Devices on their own"
+  de: "Geräte einzeln"
+web.export.summary_inputs:
+  en: "Values → Loxone"
+  de: "Werte → Loxone"
+web.export.summary_outputs:
+  en: "Commands ← Loxone"
+  de: "Befehle ← Loxone"
+web.export.summary_via_group_one:
+  en: "1 device is switched only through its group."
+  de: "1 Gerät wird nur über seine Gruppe geschaltet."
+web.export.summary_via_group_many:
+  en: "{count} devices are switched only through their group."
+  de: "{count} Geräte werden nur über ihre Gruppe geschaltet."
+web.export.summary_changed_one:
+  en: "1 entry has changed since the last export."
+  de: "1 Eintrag hat sich seit dem letzten Export geändert."
+web.export.summary_changed_many:
+  en: "{count} entries have changed since the last export."
+  de: "{count} Einträge haben sich seit dem letzten Export geändert."
+web.export.summary_update_project:
+  en: "Update Loxone project"
+  de: "Loxone-Projekt aktualisieren"
+web.export.summary_update_project_hint:
+  en: "Upload your project file and get it back with the changes."
+  de: "Projektdatei hochladen und mit den Änderungen zurückbekommen."
+web.export.summary_zip:
+  en: "Templates as ZIP"
+  de: "Vorlagen als ZIP"
+web.export.templates_details:
+  en: "Templates in detail"
+  de: "Vorlagen im Detail"
+# Capability chips (`export.capabilities`): one name for what several
+# signals or commands carry.
+web.export.cap_light:
+  en: "Light control"
+  de: "Lichtsteuerung"
+web.export.cap_onoff:
+  en: "On/off"
+  de: "Ein/Aus"
+web.export.cap_level:
+  en: "Brightness"
+  de: "Helligkeit"
+web.export.cap_colortemp:
+  en: "Colour temperature"
+  de: "Farbtemperatur"
+web.export.cap_color:
+  en: "Colour"
+  de: "Farbe"
+web.export.cap_motion:
+  en: "Motion"
+  de: "Bewegung"
+web.export.cap_contact:
+  en: "Contact"
+  de: "Kontakt"
+web.export.cap_temperature:
+  en: "Temperature"
+  de: "Temperatur"
+web.export.cap_humidity:
+  en: "Humidity"
+  de: "Luftfeuchte"
+web.export.cap_illuminance:
+  en: "Light level"
+  de: "Beleuchtungsstärke"
+web.export.cap_button:
+  en: "Button"
+  de: "Taster"
+web.export.cap_power:
+  en: "Power"
+  de: "Leistung"
+web.export.cap_energy:
+  en: "Energy"
+  de: "Energie"
+web.export.cap_alarm:
+  en: "Alarm"
+  de: "Alarm"
+web.export.cap_battery:
+  en: "Battery"
+  de: "Batterie"

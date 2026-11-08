@@ -185,7 +185,11 @@ DEFAULT_LISTEN_PORT = 8080
 # Version 17 (commissioning queue, design 2026-10-02, section 7) adds the
 # tables `dcl_vendor` and `dcl_model`, a cache of the CSA DCL's product
 # names. New tables only: a rolled-back image never names them.
-_SCHEMA_VERSION = 17
+# Version 18 (export overview, design 2026-11-07, section 2) adds the
+# nullable column `device.group_export`, see `_migrate_to_v18`. Additive; it
+# writes `full` for every device that is a group member at that moment, so an
+# existing installation keeps exporting what it exported before.
+_SCHEMA_VERSION = 18
 
 
 def schema_version() -> int:
@@ -219,7 +223,8 @@ CREATE TABLE IF NOT EXISTS device (
     product_name     TEXT,
     firmware         TEXT,
     serial_number    TEXT,
-    matter_spec_version INTEGER
+    matter_spec_version INTEGER,
+    group_export     TEXT
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1032,6 +1037,23 @@ def _migrate_to_v17(db: sqlite3.Connection) -> None:
     before `_migrate`; nothing else to do."""
 
 
+def _migrate_to_v18(db: sqlite3.Connection) -> None:
+    """Adds `device.group_export` (export overview, design 2026-11-07,
+    section 2).
+
+    A group member without a value is exported only through its group from
+    now on. Before this version every member was exported on its own as
+    well, and a Loxone project may already hold its inputs and outputs - so
+    every device that is a member right now gets `full`, the old behaviour,
+    written down. Only when the column is new: a fresh database has the
+    column from `_SCHEMA` and no members yet."""
+    if _add_column_if_missing(db, "device", "group_export", "TEXT"):
+        db.execute(
+            "UPDATE device SET group_export = 'full'"
+            " WHERE id IN (SELECT device_id FROM device_group_member)"
+        )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -1053,6 +1075,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     15: _migrate_to_v15,
     16: _migrate_to_v16,
     17: _migrate_to_v17,
+    18: _migrate_to_v18,
 }
 
 
@@ -1418,6 +1441,11 @@ class StoredDevice:
     # for a Zigbee device and for a Matter device from before 1.3. Unlike
     # the four fields above it is refreshed after a firmware update.
     matter_spec_version: int | None = None
+    # How the device is exported while it belongs to a group (design
+    # 2026-11-07, section 2): `group`, `status` or `full`. `None` is the
+    # default, which `export.scope.export_mode` resolves; read it there,
+    # never here, because the answer also depends on group membership.
+    group_export: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1766,6 +1794,7 @@ class Store:
             matter_spec_version=(
                 None if row["matter_spec_version"] is None else int(row["matter_spec_version"])
             ),
+            group_export=row["group_export"],
         )
 
     def devices(self) -> list[StoredDevice]:
@@ -2287,6 +2316,26 @@ class Store:
             "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
         )
         self._db.commit()
+
+    def set_group_export(self, device_id: int, mode: str) -> None:
+        """Sets how a group member is exported (design 2026-11-07, section
+        2). Bumps `updated_at`, unlike `set_room`: the next export changes.
+
+        Like `rename_device`, with no existence check: the calling route
+        checks via `device()` and reports 404 before it gets here."""
+        self._db.execute(
+            "UPDATE device SET group_export = ?, updated_at = ? WHERE id = ?",
+            (mode, self._now(), device_id),
+        )
+        self._db.commit()
+
+    def group_member_ids(self) -> set[int]:
+        """Every active device that belongs to at least one group."""
+        rows = self._db.execute(
+            "SELECT DISTINCT m.device_id FROM device_group_member m"
+            " JOIN device d ON d.id = m.device_id WHERE d.active = 1"
+        ).fetchall()
+        return {int(r["device_id"]) for r in rows}
 
     def backfill_commands(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Backfills commands that did not yet exist at commissioning time, and

@@ -168,3 +168,18 @@ def test_seed_keeps_a_udp_port_saved_in_the_interface(tmp_path):
         assert settings.udp_port == 7001
     finally:
         store.close()
+
+
+def test_the_running_listen_port_wins_over_a_stored_one(tmp_path):
+    """2026-11-08, found on a real bridge: the setup assistant saved the
+    form default 8080 while the bridge ran on 8083, and every exported
+    output pointed at 8080. The port the process listens on is the truth."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store.settings.save(
+            bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080, miniserver_ip=None
+        )
+        store.settings.use_listen_port(8083)
+        assert store.settings.get().listen_port == 8083
+    finally:
+        store.close()

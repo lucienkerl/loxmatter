@@ -218,6 +218,11 @@ class DevicePatch(BaseModel):
 
     label: str | None = None
     room: str | None = None
+    # How the device is exported while it belongs to a group (design
+    # 2026-11-07, section 2). `None` means "unchanged", like the two above;
+    # there is no way back to the stored default, which a member never
+    # needs: `group` IS that default.
+    group_export: Literal["group", "status", "full"] | None = None
 
 
 class RoomRename(BaseModel):
@@ -558,6 +563,99 @@ class ExportPreviewOut(BaseModel):
     devices: list[ExportDeviceOut]
     groups: list[ExportGroupOut]
     system_files: list[str]
+
+
+class CapabilityOut(BaseModel):
+    """One chip of the export overview (`export.capabilities.Capability`).
+    `key` is translated by the web UI; `None` means "not in the table",
+    and `label` is then shown as it is."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str | None
+    label: str
+
+
+class OverviewMemberOut(BaseModel):
+    """A group member in `GET /api/export/overview`.
+
+    `inputs`/`outputs` are what the member would export on its own in full,
+    whatever its `mode`: the web UI shows the inputs for `status` and both
+    for `full`, and needs them before the user picks a mode."""
+
+    model_config = ConfigDict(frozen=True)
+
+    device_id: int
+    label: str
+    mode: str
+    inputs: list[CapabilityOut]
+    outputs: list[CapabilityOut]
+    changed_since_export: bool
+
+
+class OverviewGroupOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    group_id: int
+    label: str
+    category: str
+    outputs: list[CapabilityOut]
+    output_count: int
+    changed_since_export: bool
+    members: list[OverviewMemberOut]
+
+
+class OverviewDeviceOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    device_id: int
+    label: str
+    category: str
+    technology: str
+    transport: str | None
+    inputs: list[CapabilityOut]
+    outputs: list[CapabilityOut]
+    input_count: int
+    output_count: int
+    changed_since_export: bool
+
+
+class OverviewRoomOut(BaseModel):
+    """A room of the export overview; `name` `None` is "no room", always
+    the last one."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str | None
+    groups: list[OverviewGroupOut]
+    devices: list[OverviewDeviceOut]
+
+
+class OverviewTotalsOut(BaseModel):
+    """`devices`: devices with Loxone objects of their own, group members
+    with `status` or `full` included. `inputs`/`outputs`: the objects the
+    templates would hold, online inputs and paired on/off outputs counted
+    as the template writes them. `via_group`: members switched only
+    through their group. `changed`: groups and devices changed since their
+    last export."""
+
+    model_config = ConfigDict(frozen=True)
+
+    groups: int
+    devices: int
+    inputs: int
+    outputs: int
+    via_group: int
+    changed: int
+
+
+class ExportOverviewOut(BaseModel):
+    """`GET /api/export/overview` (design 2026-11-07, section 3)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rooms: list[OverviewRoomOut]
+    totals: OverviewTotalsOut
 
 
 class ExportStatusOut(BaseModel):

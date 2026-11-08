@@ -10,6 +10,17 @@ people who don't know the code.
 
 ### Added
 
+- **A clearer export screen.** Export now shows what goes to Loxone room by
+  room, groups first, with short chips such as "→ Power" or "← On/off"
+  instead of long signal tables. Rooms without changes start folded, a
+  search field and "Changed only" narrow the list, and a summary next to it
+  holds "Update Loxone project" and "Templates as ZIP".
+- **Lamps in a group are exported through the group.** A new group member
+  no longer gets Loxone objects of its own; open the group on the export
+  screen to export a member on its own again, completely or with its status
+  values only. Members of groups that already exist keep being exported as
+  before, so no Loxone project loses inputs or outputs by updating.
+
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks
   (Thread, Zigbee, or nothing - every combination works). The installer no
@@ -53,6 +64,18 @@ people who don't know the code.
 
 ### Fixed
 
+- **Exported outputs use the bridge's real port.** The HTTP port in exported
+  outputs came from a settings field that the setup assistant could save as
+  8080 while the bridge ran on another port, so Loxone sent its commands
+  nowhere. Export and project sync now always use the port the bridge
+  listens on (`LOXMATTER_PORT`), and Settings shows it read only.
+- **A changed bridge address reaches the whole Loxone project.** Reading
+  your Loxone project file in again after the bridge's IP, UDP port or HTTP
+  port changed now moves every device's and group's existing virtual inputs
+  and outputs to the new address, and the plan shows each one as "Bridge
+  address" with the old and the new value. Before, only devices added after
+  the change got the new address, and outputs created earlier kept sending
+  to the old port. Names you gave them in Loxone Config stay as they are.
 - **The setup assistant says what it is doing.** While something runs
   against Home Assistant or the Zigbee stick, a line at the bottom of the
   window names it, and for the slow steps says how long they may take. Each
