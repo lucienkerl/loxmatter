@@ -2,6 +2,7 @@
 (design 2026-10-02, sections 4, 8 and 9)."""
 
 import asyncio
+import dataclasses
 import json
 import logging
 
@@ -1089,3 +1090,65 @@ async def test_an_on_network_card_is_not_tried_again(h):
     assert h.gate.calls == 1
     assert h.scanner.scans == []
     assert card_view(h, card.id)["state"] == "failed"
+
+
+# 2026-11-08, the test Pi: the adapter aborted every Bluetooth connection to
+# a TIMMERFLOTTE within 1-2 s, and matter-server answered only at its own
+# 180 s timeout. The bridge's tracker had already seen the device.
+
+
+async def _running_and_found(h):
+    h.gate.held = True
+    card = await ready_card(h, "AA:01", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.reader.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -55)]
+    await h.session.start()
+    await settle_until(lambda: card_view(h, card.id)["phase"] == "searching", "searching")
+    h.tracker._advance("found")
+    await settle_until(lambda: card_view(h, card.id)["phase"] == "found", "found")
+    return card
+
+
+async def test_a_bluetooth_connection_that_never_holds_shows_failed_at_once(h):
+    """Fault to prove it: never set `stalled` in `_monitor` - the card
+    stays "running" until matter-server answers."""
+    card = await _running_and_found(h)
+    reads = h.reader.reads
+    await settle_until(lambda: h.reader.reads >= reads + 2, "the monitor saw the device")
+    h.clock.now += 21.0
+    await settle_until(lambda: card_view(h, card.id)["state"] == "failed", "shown as failed")
+    assert card_view(h, card.id)["note"] == i18n.t("web.commissioning.note_bluetooth_aborted")
+    # matter-server still answers at its own timeout - and no second try.
+    h.gate.failures = [LOST_BLUETOOTH]
+    h.gate.release_all()
+    await idle(h)
+    assert h.gate.calls == 1
+    assert card_view(h, card.id)["state"] == "failed"
+
+
+async def test_a_connection_that_held_is_never_cut_short(h):
+    """PASE and the network setup run over a connection that stays up; the
+    Thread join afterwards can take long. Fault to prove it: drop `held`."""
+    card = await _running_and_found(h)
+    connected = dataclasses.replace(h.reader.adverts[0], connected=True, rssi=None)
+    h.reader.adverts = [connected]
+    reads = h.reader.reads
+    await settle_until(lambda: h.reader.reads >= reads + 2, "the monitor saw the connection")
+    h.clock.now += 6.0
+    reads = h.reader.reads
+    await settle_until(lambda: h.reader.reads >= reads + 2, "the connection held")
+    h.reader.adverts = []
+    h.clock.now += 60.0
+    reads = h.reader.reads
+    await settle_until(lambda: h.reader.reads >= reads + 3, "the monitor looked again")
+    assert card_view(h, card.id)["state"] == "running"
+
+
+async def test_a_device_commissioned_after_all_still_finishes(h):
+    card = await _running_and_found(h)
+    reads = h.reader.reads
+    await settle_until(lambda: h.reader.reads >= reads + 2, "the monitor saw the device")
+    h.clock.now += 21.0
+    await settle_until(lambda: card_view(h, card.id)["state"] == "failed", "shown as failed")
+    h.gate.release_all()
+    await settle_until(lambda: card_view(h, card.id)["state"] == "naming", "finished after all")
+    assert card_view(h, card.id)["note"] is None

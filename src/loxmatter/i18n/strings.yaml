@@ -1239,6 +1239,9 @@ web.commissioning.note_wifi:
 web.commissioning.note_not_nearby:
   en: "Not found nearby. {hint}"
   de: "Nicht in der Nähe gefunden. {hint}"
+web.commissioning.note_bluetooth_aborted:
+  en: "The Bluetooth connection to the device kept breaking off. Put it right next to the bridge and restart its pairing mode. If the bridge shares its Bluetooth adapter with Home Assistant or with Wi-Fi, a USB Bluetooth adapter of its own helps."
+  de: "Die Bluetooth-Verbindung zum Gerät ist immer wieder abgebrochen. Legen Sie es direkt neben die Bridge und starten Sie den Kopplungsmodus neu. Teilt sich die Bridge ihren Bluetooth-Adapter mit Home Assistant oder dem WLAN, hilft ein eigener USB-Bluetooth-Stick."
 web.commissioning.note_no_signal_yet:
   en: "No matching device is advertising yet."
   de: "Noch sendet kein passendes Gerät."
