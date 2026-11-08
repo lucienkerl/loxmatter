@@ -72,8 +72,9 @@ people who don't know the code.
   missing a field Zigbee requires and never left the bridge; the web UI
   reported it as "no answer" from the lamp.
 - **Colour reaches Zigbee lamps that ignored it.** A colour now goes to a
-  Zigbee lamp the way Home Assistant sends it (as an XY colour point), so
-  lamps such as the Tuya TS0505B change colour.
+  Zigbee lamp the way Home Assistant sends it (as an XY colour point), from
+  Loxone and from the colour picker in the web interface alike, so lamps
+  such as the Tuya TS0505B change colour.
 - **Exported outputs use the bridge's real port.** The HTTP port in exported
   outputs came from a settings field that the setup assistant could save as
   8080 while the bridge ran on another port, so Loxone sent its commands

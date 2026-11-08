@@ -439,9 +439,32 @@ def test_lumitech_rgb_on_a_zigbee_colour_lamp_sends_xy_although_it_carries_hue_s
     assert got[0] == (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF})
 
 
-def test_a_zigbee_lamp_still_takes_hue_saturation_when_the_command_names_it():
+def test_a_zigbee_lamp_takes_xy_even_when_the_group_command_names_hue_saturation():
+    """Measured on the Pi on 8 November 2026: the Tuya TS0505B ignores
+    MoveToHueAndSaturation however it is reached, and the web UI's colour
+    picker sends `g{id}_color`.
+
+    Fault to prove it: put `and named != COLOUR_HS` back into `zigbee_xy`."""
     member = [replace(row, technology="zigbee") for row in CWS]
-    assert shape(adapt_group_command(COLOUR_HS, member, BLUE_60))[0][:2] == (768, 6)
+    assert shape(adapt_group_command(COLOUR_HS, member, BLUE_60))[0][:2] == (768, 7)
+
+
+def test_a_single_zigbee_lamp_takes_xy_for_the_colour_picker():
+    """`d{id}_{ep}_color` on a Zigbee lamp that carries XY: the same calls
+    as `color_xy` on it.
+
+    Fault to prove it: drop the Zigbee branch from `adapt_device_command`."""
+    device = [replace(row, technology="zigbee") for row in CWS]
+    colour = next(r for r in device if (r.cluster_id, r.command_id) == COLOUR_HS)
+    xy = next(r for r in device if (r.cluster_id, r.command_id) == COLOUR_XY)
+    calls = adapt_device_command(colour, device, BLUE_60)
+    assert shape(calls)[0][:2] == (768, 7)
+    assert calls == adapt_device_command(xy, device, BLUE_60)
+
+
+def test_a_single_matter_lamp_keeps_hue_saturation_for_the_colour_picker():
+    colour = next(r for r in CWS if (r.cluster_id, r.command_id) == COLOUR_HS)
+    assert shape(adapt_device_command(colour, CWS, BLUE_60))[0][:2] == (768, 6)
 
 
 def test_lumitech_white_on_the_colour_lamp_sends_the_temperature_then_brightness():

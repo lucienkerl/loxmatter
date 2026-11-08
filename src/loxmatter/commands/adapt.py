@@ -134,7 +134,7 @@ def _colour(
     temperature command where the member carries it, else as a colour point.
     A colour goes as the colour command the group command names where the
     member carries it, else as the other one; `lumitech` names neither and
-    takes hue/saturation first - XY first on a Zigbee lamp."""
+    takes hue/saturation first. A Zigbee lamp takes XY first, always."""
     if colour.kelvin is not None:
         if COLOUR_TEMPERATURE in here:
             return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(colour.kelvin))]
@@ -148,12 +148,13 @@ def _colour(
     # 254, while hue/saturation took it to its own red edge (design
     # 2026-09-24, 3.1, as amended on that day).
     #
-    # A Zigbee lamp is the exception: it takes XY whenever it carries XY and
-    # the command does not name hue/saturation. ZHA sends a colour as XY,
+    # A Zigbee lamp is the exception: it takes XY whenever it carries XY,
+    # even when the command names hue/saturation. ZHA sends a colour as XY,
     # and a Tuya TS0505B in the maintainer's living room acknowledged
     # MoveToHueAndSaturation with Success on 8 November 2026 and kept its
-    # colour (design 2026-09-24, 3.1, as amended on that day).
-    zigbee_xy = sample.technology == "zigbee" and named != COLOUR_HS
+    # colour, while MoveToColor changed it (design 2026-09-24, 3.1, as
+    # amended on that day).
+    zigbee_xy = sample.technology == "zigbee"
     if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here or zigbee_xy):
         return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
     if COLOUR_HS in here:
@@ -226,7 +227,23 @@ def adapt_device_command(
     follows, so the two paths build byte-identical calls. Every other
     command is `to_device_calls` unchanged. Here rather than in
     `translate.py`, because this module imports that one."""
-    if (command.cluster_id, command.command_id) != LUMITECH:
+    pair = (command.cluster_id, command.command_id)
+    if pair == COLOUR_HS and command.technology == "zigbee":
+        # The web UI's colour picker sends `color`. A Zigbee lamp that
+        # carries XY gets the same colour as XY (see `_colour`); the value
+        # format of the two commands is the same packed Loxone colour.
+        xy = next(
+            (
+                row
+                for row in device_rows
+                if row.endpoint == command.endpoint
+                and (row.cluster_id, row.command_id) == COLOUR_XY
+            ),
+            None,
+        )
+        if xy is not None:
+            return to_device_calls(xy, value)
+    if pair != LUMITECH:
         return to_device_calls(command, value)
     rows = [
         row
