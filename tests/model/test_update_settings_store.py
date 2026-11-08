@@ -130,6 +130,9 @@ _KNOWN_TABLES = frozenset(
         # Schema 17 (commissioning queue): the DCL product-name cache.
         "dcl_vendor",
         "dcl_model",
+        # Schema 19 (device configuration values): values waiting for a
+        # sleeping Zigbee device.
+        "zigbee_pending_write",
     }
 )
 

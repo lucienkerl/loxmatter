@@ -307,6 +307,10 @@ def build_control_router(
             # widget, and not "unnamed" either (design 2026-09-24, 4.1).
             if (command.cluster_id, command.command_id) == LUMITECH:
                 continue
+            # A configuration value is set in its own dialog, not operated
+            # here (design 2026-11-08, section 6) - and not "unnamed".
+            if command.option is not None:
+                continue
             if command_slug(command.cluster_id, command.command_id) is None:
                 unnamed += 1
                 continue

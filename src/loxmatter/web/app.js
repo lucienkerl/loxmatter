@@ -1172,6 +1172,19 @@ function app() {
     expertData: null,
     expertError: null,
 
+    // The configuration dialog (design 2026-11-08, section 6): the values a
+    // device brings along, such as a motion sensor's keep time. Same
+    // open/close mechanics as the expert modal. `configDrafts` holds what a
+    // number field shows while it is being typed in, per option key;
+    // `configBusy` the keys whose value is on its way.
+    configModalDevice: null,
+    configModalBackdropMousedown: false,
+    configData: null,
+    configError: null,
+    configDrafts: {},
+    configBusy: {},
+    configPollTimer: null,
+
     // Firmware updates (design 2026-09-30). `firmware` is the last
     // `GET /api/firmware`; `firmwareModalDevice` the device whose dialog is
     // open. Polled every 5 s while a check or an install runs, else every 60 s.
@@ -5269,6 +5282,106 @@ function app() {
      * place that resets `expertModalDevice`/`expertData`/`expertError`. */
     closeExpertModal() {
       this.$refs.expertModal.close();
+    },
+
+    // ---------------------------------------------------------------------
+    // Device configuration (design 2026-11-08, section 6)
+    // ---------------------------------------------------------------------
+
+    configModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.configModalDevice) || null;
+    },
+
+    async openConfigModal(device) {
+      this.configError = null;
+      this.configData = null;
+      this.configDrafts = {};
+      this.configBusy = {};
+      this.configModalDevice = device.id;
+      this.$nextTick(() => this.$refs.configModal.showModal());
+      await this.loadConfig(device.id);
+    },
+
+    /** Loads the device's options. While a value waits for a sleeping
+     * device, it asks again every 5 s, so "waiting for the device" turns
+     * into the new value the moment the device takes it - without the
+     * user reopening anything. */
+    async loadConfig(deviceId) {
+      clearTimeout(this.configPollTimer);
+      this.configPollTimer = null;
+      try {
+        const data = await this.request("GET", `/api/devices/${deviceId}/options`);
+        if (this.configModalDevice !== deviceId) return;
+        this.configData = data;
+        this.configError = null;
+        if (data.options.some((option) => option.pending !== null)) {
+          this.configPollTimer = setTimeout(() => this.loadConfig(deviceId), 5000);
+        }
+      } catch (error) {
+        if (this.configModalDevice === deviceId) {
+          this.configError = t("web.config.load_error", { message: error.message });
+        }
+      }
+    },
+
+    closeConfigModal() {
+      this.$refs.configModal.close();
+    },
+
+    onConfigModalClosed() {
+      clearTimeout(this.configPollTimer);
+      this.configPollTimer = null;
+      this.configModalDevice = null;
+      this.configData = null;
+      this.configError = null;
+    },
+
+    /** The value an option's control shows: the one still waiting for the
+     * device, else the one the device reported. */
+    configShownValue(option) {
+      return option.pending !== null ? option.pending : option.value;
+    },
+
+    configValueText(option, value) {
+      if (value === null || value === undefined) return t("web.config.value_unknown");
+      if (option.kind === "switch") return value ? t("web.config.on") : t("web.config.off");
+      if (option.kind === "enum") {
+        const choice = option.choices.find((c) => c.value === value);
+        return choice ? choice.label : String(value);
+      }
+      return option.unit ? `${value} ${option.unit}` : String(value);
+    },
+
+    async setConfigValue(option, value) {
+      if (value === null || value === undefined || value === "") return;
+      const deviceId = this.configModalDevice;
+      this.configBusy = { ...this.configBusy, [option.key]: true };
+      try {
+        await this.request("POST", `/api/commands/${option.key}`, { value: String(value) });
+        delete this.configDrafts[option.key];
+        await this.loadConfig(deviceId);
+      } catch (error) {
+        this.configError = t("web.config.set_error", { title: option.title, message: error.message });
+      } finally {
+        const busy = { ...this.configBusy };
+        delete busy[option.key];
+        this.configBusy = busy;
+      }
+    },
+
+    /** One checkbox for both directions: the output that sets the value
+     * and the input that reports it go to Loxone together. */
+    async toggleConfigExported(option) {
+      const exported = !option.exported;
+      try {
+        await this.request("PATCH", `/api/commands/${option.key}`, { exported });
+        if (option.signal_key) {
+          await this.request("PATCH", `/api/signals/${option.signal_key}`, { exported });
+        }
+        option.exported = exported;
+      } catch (error) {
+        this.configError = t("web.config.export_error", { message: error.message });
+      }
     },
 
     // ---------------------------------------------------------------------

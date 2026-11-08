@@ -55,6 +55,9 @@ def _default_setup() -> None:
     import zhaquirks
 
     zhaquirks.setup()
+    # loxmatter's own quirks register themselves on import, after
+    # upstream's (see the module's docstring).
+    import loxmatter.zigbee.local_quirks  # noqa: F401
 
 
 def quirks_loaded() -> bool:

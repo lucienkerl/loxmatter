@@ -50,6 +50,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from loxmatter.device_config import ConfigOption, from_raw
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID
 from loxmatter.profiles.relevance import (
@@ -84,6 +85,8 @@ class DeviceFacts:
     available: bool
     quirk_applied: bool
     endpoints: tuple[EndpointFacts, ...]
+    # What the quirk describes as writable (`zigbee/options.py`).
+    config_options: tuple[ConfigOption, ...] = ()
 
 
 # --------------------------------------------------------- device type maps --
@@ -736,6 +739,27 @@ def _apply_endpoint(endpoint: EndpointFacts, model: str, attributes: dict[str, o
         attributes[f"{endpoint.endpoint}/{cluster_id}/{ACCEPTED_COMMAND_LIST_ID}"] = command_ids
 
 
+def _apply_config_options(facts: DeviceFacts, attributes: dict[str, object]) -> None:
+    """Writes each configuration value on the scale Loxone and the web UI
+    use (design 2026-11-08, section 2): the keep time a ZG-204Z stores as 1
+    reads 60 here. Applied after the endpoints, so it also covers an
+    attribute their rules skip - the ZG-204Z's keep time lives on IAS Zone,
+    whose attributes `_apply_ias_zone` otherwise folds into one occupancy.
+    A value the option does not know is left out, like any other missing
+    value (see `build_snapshot`)."""
+    by_endpoint = {endpoint.endpoint: endpoint for endpoint in facts.endpoints}
+    for option in facts.config_options:
+        endpoint = by_endpoint.get(option.endpoint)
+        if endpoint is None:
+            continue
+        raw = endpoint.attributes.get((option.cluster_id, option.attribute_id))
+        value = None if raw is None else from_raw(option, raw)
+        if value is None:
+            attributes.pop(option.path, None)
+            continue
+        attributes[option.path] = value
+
+
 def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
     """The device as loxmatter's Matter-shaped middle expects it.
 
@@ -763,6 +787,7 @@ def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
 
     for endpoint in facts.endpoints:
         _apply_endpoint(endpoint, facts.model, attributes)
+    _apply_config_options(facts, attributes)
 
     return NodeSnapshot(
         technology="zigbee",
@@ -772,4 +797,5 @@ def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
         unique_id=facts.ieee,
         attributes=attributes,
         available=facts.available,
+        config_options=facts.config_options,
     )

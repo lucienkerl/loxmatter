@@ -5354,7 +5354,7 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     dialog since the device groups of 2026-09-10, one expert settings
     modal since 2026-09-13, one firmware update dialog since 2026-09-30,
     one update queue checklist since 2026-10-01, one commissioning dialog since
-    2026-10-02) is the only assertion that would even notice
+    2026-10-02, one device configuration dialog since 2026-11-08) is the only assertion that would even notice
     this regression: a `<dialog>` inside the tile would otherwise look
     exactly the same in the shipped text as one at the end of the page.
     The group dialog is the case in point - it holds a checkbox per
@@ -5366,7 +5366,7 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 8
+    assert markup.count("<dialog") == 9
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="syncDialog"' in markup
     assert 'x-ref="controlModal"' in markup
@@ -5375,6 +5375,7 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     assert 'x-ref="firmwareModal"' in markup
     assert 'x-ref="firmwareQueueModal"' in markup
     assert 'x-ref="commissionDialog"' in markup
+    assert 'x-ref="configModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 

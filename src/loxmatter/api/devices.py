@@ -99,6 +99,7 @@ from fastapi.responses import JSONResponse
 from loxmatter import i18n
 from loxmatter.api.models import (
     CommissionRequest,
+    ConfigOptionsOut,
     DeviceExpertOut,
     DeviceOut,
     DevicePatch,
@@ -108,6 +109,7 @@ from loxmatter.api.models import (
     SignalOut,
     SignalPatch,
 )
+from loxmatter.api.options import options_out, pending_for
 from loxmatter.commissioning.identify import IdentifyCoordinator
 from loxmatter.commissioning.run import (
     CommissionFailed,
@@ -313,6 +315,7 @@ def _device_out(
         category=category.value,
         category_rank=CATEGORY_RANK[category],
         identify=supports_identify(device),
+        config_options=sum(1 for c in store.commands(device.id) if c.option is not None),
     )
 
 
@@ -463,6 +466,18 @@ def build_device_router(
             matter_version=format_spec_version(device.matter_spec_version, device.technology),
             serial=device.serial_number,
             endpoints=_endpoints_summary(signals),
+        )
+
+    @router.get("/devices/{device_id}/options")
+    async def get_options(device_id: int) -> ConfigOptionsOut:
+        """The device's configuration values (design 2026-11-08, section
+        6). Set one with `POST /api/commands/{key}`."""
+        device = _require_device(device_id)
+        return options_out(
+            store.commands(device_id),
+            store.signals(device_id),
+            runtime.last_values_for(device_id),
+            pending_for(sources, device.technology, device.address),
         )
 
     @router.patch("/devices/{device_id}")

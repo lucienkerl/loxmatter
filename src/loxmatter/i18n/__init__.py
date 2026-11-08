@@ -119,6 +119,13 @@ class Message:
         return self.text()
 
 
+def has(key: str) -> bool:
+    """Whether `key` is in the table - for a name looked up by data the
+    bridge did not write itself (a quirk's `translation_key`), where a
+    missing entry is expected and not a programming error."""
+    return key in _STRINGS
+
+
 def raw_template(key: str) -> str:
     """Like t(), but WITHOUT .format() - returns the unresolved template
     (with {placeholders} still unfilled) in the current language, falling
