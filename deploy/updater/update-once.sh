@@ -1478,6 +1478,18 @@ build_target_image() {
   if [ -z "$build_schema" ]; then
     log "build $1: no _SCHEMA_VERSION found in $REPO/src/loxmatter/model/store.py - building with LOXMATTER_SCHEMA_VERSION empty"
   fi
+  # Make room first (2026-11-08, measured on the maintainer's Pi): an
+  # image is about 430 MB, and a card left with less than that fails the
+  # build - or worse, fills to the last byte and takes the Matter server's
+  # storage with it. Every locally built image but the running one ($FROM)
+  # and the one about to be built goes; `docker rmi` without -f refuses an
+  # image a container still uses, so nothing in use can be removed here.
+  docker images --filter "reference=$IMAGE:local-*" --format '{{.Tag}}' 2>/dev/null \
+    | while read -r build_old_tag; do
+      [ "$build_old_tag" = "$2" ] && continue
+      [ "$build_old_tag" = "${FROM:-}" ] && continue
+      docker rmi "$IMAGE:$build_old_tag" >/dev/null 2>&1 || true
+    done
   with_heartbeat run docker build \
     -t "$IMAGE:$2" \
     --build-arg "LOXMATTER_VERSION=dev" \
@@ -2139,8 +2151,7 @@ if [ "$RECREATE_OK" = true ]; then
     # generated name, not attacker- or user-supplied" reasoning as the
     # backup prune above - only build_target_image() ever produces a
     # "local-*" tag, always from a validated, fetched commit (Rule 1) -
-    # so `tail -n +11` keeps the same ten-most-recent budget the backups
-    # get. Unconditional on channel, same as the backup prune just above:
+    # so `tail -n +3` keeps the two most recent. Unconditional on channel, same as the backup prune just above:
     # a stable-channel success finds nothing matching "local-*" and this
     # is a no-op, cheaper than branching on $CHANNEL to skip it.
     #
@@ -2150,8 +2161,16 @@ if [ "$RECREATE_OK" = true ]; then
     # always kept, but a streak of failed dev-channel attempts (schema
     # jump and all) must not be the thing that decides which of the last
     # ten SUCCESSFUL builds survives.
+    #
+    # Two, not ten (2026-11-08, measured on the maintainer's Pi): a local
+    # image is about 430 MB, and four dev updates in one night filled a
+    # 14 GB SD card to its last byte - the Matter server then failed every
+    # commissioning with ENOSPC and could not commit its own storage. The
+    # newest is the one just built and running; the second keeps the
+    # predecessor for a rollback without a rebuild (a rollback rebuilds it
+    # anyway when it is gone, see build_target_image()).
     docker images --filter "reference=$IMAGE:local-*" --format '{{.Tag}}' 2>/dev/null \
-      | tail -n +11 \
+      | tail -n +3 \
       | while read -r old_tag; do docker rmi "$IMAGE:$old_tag" >/dev/null 2>&1 || true; done
 
     # A previous pass may have left this behind; a clean success means
