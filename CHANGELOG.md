@@ -68,10 +68,14 @@ people who don't know the code.
 
 ### Fixed
 
-- **Development updates no longer fill the SD card.** Each update on the
-  development channel builds an image of about 430 MB on the device. The
-  updater kept the last ten; it now removes all but the running one before
-  building, and keeps two afterwards, the new one and its predecessor.
+- **A failed Bluetooth connection shows at once when adding a device.** When
+  the device is found but its Bluetooth connection keeps breaking off, the
+  card now says so after about 20 seconds, with what to try, instead of
+  running for three to six minutes before failing.
+- **Updates built on the device no longer fill the SD card.** Such an
+  update builds an image of about 430 MB. The updater kept the last ten; it
+  now removes all but the running one before building, and keeps two
+  afterwards, the new one and its predecessor.
 - **Colour temperature works on Zigbee lamps.** The command was
   missing a field Zigbee requires and never left the bridge; the web UI
   reported it as "no answer" from the lamp.
