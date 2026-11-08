@@ -182,26 +182,31 @@ def test_title_collision_with_mismatched_key_is_possible_duplicate():
 def test_has_changes_is_false_when_everything_matches(sample_project):
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
-    # "Ein/Aus" instead of "Alter Titel", so this test really checks the
-    # unchanged case.
-    signal = _signal("d1_1_onoff", 1)
-    signal_matching_title = StoredSignal(
-        key=signal.key,
-        ref=signal.ref,
-        title="Alter Titel",
-        unit=signal.unit,
-        exportability=signal.exportability,
-        device_id=signal.device_id,
-        exported=signal.exported,
-        functional=signal.functional,
-        resend=signal.resend,
-    )
-    plan = build_plan(index, [device], {1: [signal_matching_title]}, {1: []})
+    # The file's "Alter Titel" is not the signal's own title ("Ein/Aus"):
+    # a rename in Loxone Config, which stays.
+    plan = build_plan(index, [device], {1: [_signal("d1_1_onoff", 1)]}, {1: []})
     onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")
     assert onoff.status == PlanStatus.UNCHANGED
     # "d9_9_verwaist" stays in the file but does not make has_changes true
     # - ORPHANED is a notice, not a planned change.
     assert plan.has_changes is False
+
+
+def test_an_input_still_carrying_its_bare_signal_title_gets_the_device_name(sample_project):
+    """2026-11-08, at the user's request: Loxone's window overview listed
+    every window contact as "state". An input created before that day
+    carries the signal's own title; the sync puts the device's name in
+    front. A title the user chose in Loxone Config is not touched (the
+    test above).
+
+    Fault to prove it: drop the `legacy_title` check from `_plan_inputs`."""
+    index = build_index(sample_project)
+    device = _device(1, "Altes Geraet")
+    signal = dataclasses.replace(_signal("d1_1_onoff", 1), title="Alter Titel")
+    plan = build_plan(index, [device], {1: [signal]}, {1: []})
+    onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")
+    assert onoff.status == PlanStatus.UPDATED
+    assert onoff.changes == {"Title": ("Alter Titel", "Altes Geraet: Alter Titel")}
 
 
 # A project already wired to the old single-command output `d1_1_color` -

@@ -927,6 +927,9 @@ export.signals.counter_title_suffix:
 export.signals.counter_comment_suffix:
   en: "{comment} · counter"
   de: "{comment} · Zähler"
+export.signals.input_title:
+  en: "{device_label}: {title}"
+  de: "{device_label}: {title}"
 export.signals.online_title:
   en: "{device_label} reachable"
   de: "{device_label} erreichbar"

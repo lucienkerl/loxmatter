@@ -167,6 +167,7 @@ def test_a_title_renamed_in_loxone_config_survives_the_next_sync(tmp_path):
     must not list the command as changed - the object is found by its key
     in `Check`/`CmdOn`, which renaming does not touch."""
     store = _plug_store(tmp_path)
+    label = store.devices()[0].label
     first = run_sync(
         NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
         store,
@@ -176,7 +177,7 @@ def test_a_title_renamed_in_loxone_config_survives_the_next_sync(tmp_path):
     )
     renamed = (
         first.patched.decode("utf-8-sig")
-        .replace('Title="voltage"', 'Title="Spannung Küche"')
+        .replace(f'Title="{label}: voltage"', 'Title="Spannung Küche"')
         .replace('Title="toggle"', 'Title="Umschalten"')
     )
     assert 'Title="Spannung Küche"' in renamed

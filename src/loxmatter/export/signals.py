@@ -87,6 +87,19 @@ class LoxoneInput:
     # value (states and counters), "1" matches only the rising edge
     # (events).
     check_suffix: str = "\\v"
+    # The title an input had before 8 November 2026, when it was the
+    # signal's own title alone ("state") and a block listing several
+    # inputs, such as Loxone's window overview, showed every one of them
+    # under the same name. The project sync renames an existing input
+    # still carrying it - one the user never renamed - and leaves any
+    # other title alone (`projectsync.diff`). Empty: nothing to recognise.
+    legacy_title: str = ""
+
+
+def input_title(device_label: str, title: str) -> str:
+    """An input's `Title`: the device's name before the signal's, so a
+    block that lists inputs from several devices tells them apart."""
+    return i18n.t("export.signals.input_title", device_label=device_label, title=title)
 
 
 def to_inputs(
@@ -145,27 +158,30 @@ def to_inputs(
         comment = f"{device_label} · {signal.ref.path}"
 
         if signal.ref.kind is SignalKind.EVENT:
+            counter_title = i18n.t("export.signals.counter_title_suffix", title=signal.title)
             emit(
                 # Digital, but the pattern matches only the rising edge:
                 # the pulse thus fires exactly once instead of twice (see
                 # LoxoneInput).
                 LoxoneInput(
                     signal.key,
-                    signal.title,
+                    input_title(device_label, signal.title),
                     i18n.t("export.signals.pulse_comment_suffix", comment=comment),
                     False,
                     "",
                     check_suffix="1",
+                    legacy_title=signal.title,
                 ),
                 f"the pulse of {signal.key!r}",
             )
             emit(
                 LoxoneInput(
                     f"{signal.key}_n",
-                    i18n.t("export.signals.counter_title_suffix", title=signal.title),
+                    input_title(device_label, counter_title),
                     i18n.t("export.signals.counter_comment_suffix", comment=comment),
                     True,
                     "",
+                    legacy_title=counter_title,
                 ),
                 f"the counter of {signal.key!r}",
             )
@@ -176,7 +192,14 @@ def to_inputs(
             # distinguish 1 and 0 (see LoxoneInput). The unit remains that
             # of the signal - a state has none.
             emit(
-                LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit)),
+                LoxoneInput(
+                    signal.key,
+                    input_title(device_label, signal.title),
+                    comment,
+                    True,
+                    unit_format(signal.unit),
+                    legacy_title=signal.title,
+                ),
                 f"signal {signal.key!r}",
             )
 
