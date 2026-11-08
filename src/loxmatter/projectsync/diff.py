@@ -170,10 +170,11 @@ def _plan_inputs(
     for entry in entries:
         existing = index.input_cmds.get(entry.key)
         if existing is None:
-            if has_existing_container and any(
-                _title_collision(index.input_cmds, prefix, title)
-                for title in (entry.title, entry.legacy_title)
-                if title
+            # Compared by the signal's own title: since 8 November 2026
+            # every input of a device carries the device's name, so a new
+            # input's title always matches its siblings'.
+            if has_existing_container and _title_collision(
+                index.input_cmds, prefix, entry.legacy_title or entry.title
             ):
                 status = PlanStatus.POSSIBLE_DUPLICATE
             else:
@@ -193,8 +194,8 @@ def _plan_inputs(
         changes = _diff_managed_attrs(existing.attrs, desired, MANAGED_INPUT_CMD_ATTRS)
         # `Title` is not managed (a user's rename stands), with one
         # exception: an input still carrying the bare signal title it was
-        # created with before 8 November 2026 gets the device's name in
-        # front. Nobody chose "state" for a window contact.
+        # created with before 8 November 2026 gets the device's name
+        # instead. Nobody chose "state" for a window contact.
         old_title = existing.attrs.get("Title", "")
         if entry.legacy_title and old_title == entry.legacy_title and old_title != entry.title:
             changes["Title"] = (old_title, entry.title)

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from loxmatter.export.commands import extract_commands
@@ -175,10 +176,13 @@ def test_a_title_renamed_in_loxone_config_survives_the_next_sync(tmp_path):
         port=7000,
         listen=8080,
     )
-    renamed = (
-        first.patched.decode("utf-8-sig")
-        .replace(f'Title="{label}: voltage"', 'Title="Spannung Küche"')
-        .replace('Title="toggle"', 'Title="Umschalten"')
+    # Every input carries the device's name, so the voltage input is found
+    # by its key in `Check`, the way the sync itself finds it.
+    text = first.patched.decode("utf-8-sig")
+    voltage = re.search(r'Title="([^"]*)"[^>]*Check="d\d+_\d+_voltage:', text)
+    assert voltage is not None and voltage.group(1) == label
+    renamed = (text[: voltage.start(1)] + "Spannung Küche" + text[voltage.end(1) :]).replace(
+        'Title="toggle"', 'Title="Umschalten"'
     )
     assert 'Title="Spannung Küche"' in renamed
     assert 'Title="Umschalten"' in renamed

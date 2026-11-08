@@ -107,7 +107,7 @@ def test_event_pulse_and_counter_title_and_comment_follow_the_current_language()
     pulse = next(i for i in inputs if i.key == "d3_1_press")
     counter = next(i for i in inputs if i.key == "d3_1_press_n")
     assert pulse.comment == "Taster · 1/6/0 · pulse"
-    assert counter.title == "Taster: d3_1_press counter"
+    assert counter.title == "Taster counter"
     assert counter.comment == "Taster · 1/6/0 · counter"
 
     i18n.set_language("de")
@@ -115,7 +115,7 @@ def test_event_pulse_and_counter_title_and_comment_follow_the_current_language()
     pulse = next(i for i in inputs if i.key == "d3_1_press")
     counter = next(i for i in inputs if i.key == "d3_1_press_n")
     assert pulse.comment == "Taster · 1/6/0 · Impuls"
-    assert counter.title == "Taster: d3_1_press Zähler"
+    assert counter.title == "Taster Zähler"
     assert counter.comment == "Taster · 1/6/0 · Zähler"
 
 

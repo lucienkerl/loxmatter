@@ -96,10 +96,12 @@ class LoxoneInput:
     legacy_title: str = ""
 
 
-def input_title(device_label: str, title: str) -> str:
-    """An input's `Title`: the device's name before the signal's, so a
-    block that lists inputs from several devices tells them apart."""
-    return i18n.t("export.signals.input_title", device_label=device_label, title=title)
+def input_title(device_label: str) -> str:
+    """An input's `Title`: the device's name, at the user's request
+    (2026-11-08) - a block that lists inputs from several devices, such as
+    Loxone's window overview, shows this name. Which signal an input
+    carries stays readable from its comment and its key."""
+    return device_label
 
 
 def to_inputs(
@@ -158,14 +160,14 @@ def to_inputs(
         comment = f"{device_label} · {signal.ref.path}"
 
         if signal.ref.kind is SignalKind.EVENT:
-            counter_title = i18n.t("export.signals.counter_title_suffix", title=signal.title)
+            legacy_counter_title = i18n.t("export.signals.counter_title_suffix", title=signal.title)
             emit(
                 # Digital, but the pattern matches only the rising edge:
                 # the pulse thus fires exactly once instead of twice (see
                 # LoxoneInput).
                 LoxoneInput(
                     signal.key,
-                    input_title(device_label, signal.title),
+                    input_title(device_label),
                     i18n.t("export.signals.pulse_comment_suffix", comment=comment),
                     False,
                     "",
@@ -177,11 +179,11 @@ def to_inputs(
             emit(
                 LoxoneInput(
                     f"{signal.key}_n",
-                    input_title(device_label, counter_title),
+                    i18n.t("export.signals.counter_title_suffix", title=input_title(device_label)),
                     i18n.t("export.signals.counter_comment_suffix", comment=comment),
                     True,
                     "",
-                    legacy_title=counter_title,
+                    legacy_title=legacy_counter_title,
                 ),
                 f"the counter of {signal.key!r}",
             )
@@ -194,7 +196,7 @@ def to_inputs(
             emit(
                 LoxoneInput(
                     signal.key,
-                    input_title(device_label, signal.title),
+                    input_title(device_label),
                     comment,
                     True,
                     unit_format(signal.unit),

@@ -206,7 +206,7 @@ def test_an_input_still_carrying_its_bare_signal_title_gets_the_device_name(samp
     plan = build_plan(index, [device], {1: [signal]}, {1: []})
     onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")
     assert onoff.status == PlanStatus.UPDATED
-    assert onoff.changes == {"Title": ("Alter Titel", "Altes Geraet: Alter Titel")}
+    assert onoff.changes == {"Title": ("Alter Titel", "Altes Geraet")}
 
 
 # A project already wired to the old single-command output `d1_1_color` -
@@ -390,3 +390,20 @@ def test_a_device_without_a_room_gets_no_assignment(rooms_project):
     plan = build_plan(index, [_device(2, "Neues Geraet")], {2: [_signal("d2_1_onoff", 2)]}, {2: []})
     assert plan.rooms == []
     assert all(entry.room is None for entry in plan.entries)
+
+
+def test_a_new_input_carrying_the_device_name_like_its_siblings_is_new_not_a_duplicate(
+    sample_project,
+):
+    """Every input of a device carries the device's name since 8 November
+    2026, so a new input's title always matches an existing one in the same
+    container. The duplicate check compares the signal's own title instead.
+
+    Fault to prove it: compare `entry.title` in `_plan_inputs` again."""
+    index = build_index(sample_project)
+    device = _device(1, "Alter Titel")  # the title the file's input carries
+    temperature = dataclasses.replace(_signal("d1_1_temp", 1), title="Temperatur")
+    plan = build_plan(index, [device], {1: [_signal("d1_1_onoff", 1), temperature]}, {1: []})
+    entry = next(e for e in plan.entries if e.key == "d1_1_temp")
+    assert entry.title == "Alter Titel"
+    assert entry.status == PlanStatus.NEW_SIGNAL
