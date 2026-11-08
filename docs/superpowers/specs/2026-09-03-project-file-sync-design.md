@@ -118,19 +118,6 @@ renaming a device or signal in loxmatter no longer reaches objects that
 already exist in the project file; the user renames them in Config. The
 device containers' titles were never managed and are unaffected.
 
-**Update 2026-11-08: an input is titled with the device's name.** An
-input used to be titled with the signal alone, so Loxone's window
-overview listed every window contact as `state`. At the user's request
-`to_inputs` now writes the device's name alone (an event's counter:
-`<device> counter`); which signal an input carries stays readable from
-its comment and its key. The rule above still holds, with one exception
-for inputs that already exist: one whose `Title` is still the bare signal
-title it was created with (`LoxoneInput.legacy_title`) is listed as
-`updated` and renamed once. Nobody chose `state` for a window, and any
-other title counts as the user's and stays. Since every input of a device
-now shares its title, the `possible_duplicate` check compares the
-signal's own title (`legacy_title`) instead.
-
 ### 3.4 Risk levels: update is the default case, creation is opt-in
 
 The real reference file parses cleanly, but the `U` ID scheme for new

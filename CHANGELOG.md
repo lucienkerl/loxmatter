@@ -24,10 +24,6 @@ people who don't know the code.
   screen and on the device tiles now means "differs from the project file
   you read in", not "changed since a template download". Until a file is
   read, nothing is marked.
-- **Loxone inputs carry the device's name.** An input is now titled with
-  the device's name, so Loxone's window overview no longer lists every window
-  as "state". Updating your Loxone project renames inputs that still carry
-  the old bare title; a name you gave an input in Loxone Config stays.
 
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks

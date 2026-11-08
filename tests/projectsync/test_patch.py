@@ -160,10 +160,8 @@ def _unchanged_signals() -> list[StoredSignal]:
     """Signals that exactly match what is in `sample_project` - so the plan
     contains neither `updated` nor `new_signal`/`new_device` (see
     `tests/projectsync/test_diff.py`,
-    `test_has_changes_is_false_when_everything_matches`). The file's
-    "Alter Titel" is not the signal's own title, so it counts as a rename
-    in Loxone Config and stays."""
-    return [_signal("d1_1_onoff", 1, title="Ein/Aus")]
+    `test_has_changes_is_false_when_everything_matches`)."""
+    return [_signal("d1_1_onoff", 1, title="Alter Titel")]
 
 
 def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
