@@ -114,6 +114,9 @@ def run_sync(
         commands_by_device,
         groups=groups,
         commands_by_group=commands_by_group,
+        bridge_ip=bridge_ip,
+        port=port,
+        listen=listen,
     )
     # A `ProjectFormatError` from `_installation_suffix` (finding N1 from
     # the re-review: via `apply_plan` -> `_new_signal_edit`/

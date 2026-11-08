@@ -69,7 +69,13 @@ people who don't know the code.
   8080 while the bridge ran on another port, so Loxone sent its commands
   nowhere. Export and project sync now always use the port the bridge
   listens on (`LOXMATTER_PORT`), and Settings shows it read only.
-
+- **A changed bridge address reaches the whole Loxone project.** Reading
+  your Loxone project file in again after the bridge's IP, UDP port or HTTP
+  port changed now moves every device's and group's existing virtual inputs
+  and outputs to the new address, and the plan shows each one as "Bridge
+  address" with the old and the new value. Before, only devices added after
+  the change got the new address, and outputs created earlier kept sending
+  to the old port. Names you gave them in Loxone Config stay as they are.
 - **The setup assistant says what it is doing.** While something runs
   against Home Assistant or the Zigbee stick, a line at the bottom of the
   window names it, and for the slow steps says how long they may take. Each

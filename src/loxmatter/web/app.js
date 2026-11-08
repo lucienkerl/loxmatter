@@ -9047,8 +9047,9 @@ function app() {
 
     /** Display label for the attribute names from `entry.changes` - the
      * same keys as `MANAGED_INPUT_CMD_ATTRS`/`MANAGED_OUTPUT_CMD_ATTRS` in
-     * `projectsync/schema.py`. Unknown names (should not happen) appear
-     * untranslated instead of vanishing. */
+     * `projectsync/schema.py`, plus `Address`/`Port` of a device's
+     * container (`diff._plan_containers`). Unknown names (should not
+     * happen) appear untranslated instead of vanishing. */
     projectSyncAttrLabel(attr) {
       const labels = {
         Title: t("web.export.projectsync_attr_title"),
@@ -9057,6 +9058,8 @@ function app() {
         Unit: t("web.export.projectsync_attr_unit"),
         CmdOn: t("web.export.projectsync_attr_cmd_on"),
         CmdOff: t("web.export.projectsync_attr_cmd_off"),
+        Address: t("web.export.projectsync_attr_address"),
+        Port: t("web.export.projectsync_attr_port"),
       };
       return labels[attr] || attr;
     },
