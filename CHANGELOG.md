@@ -24,10 +24,6 @@ people who don't know the code.
   screen and on the device tiles now means "differs from the project file
   you read in", not "changed since a template download". Until a file is
   read, nothing is marked.
-- **Loxone inputs carry the device's name.** An input is now titled with
-  the device's name, so Loxone's window overview no longer lists every window
-  as "state". Updating your Loxone project renames inputs that still carry
-  the old bare title; a name you gave an input in Loxone Config stays.
 
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks
@@ -72,10 +68,14 @@ people who don't know the code.
 
 ### Fixed
 
-- **Development updates no longer fill the SD card.** Each update on the
-  development channel builds an image of about 430 MB on the device. The
-  updater kept the last ten; it now removes all but the running one before
-  building, and keeps two afterwards, the new one and its predecessor.
+- **A failed Bluetooth connection shows at once when adding a device.** When
+  the device is found but its Bluetooth connection keeps breaking off, the
+  card now says so after about 20 seconds, with what to try, instead of
+  running for three to six minutes before failing.
+- **Updates built on the device no longer fill the SD card.** Such an
+  update builds an image of about 430 MB. The updater kept the last ten; it
+  now removes all but the running one before building, and keeps two
+  afterwards, the new one and its predecessor.
 - **Colour temperature works on Zigbee lamps.** The command was
   missing a field Zigbee requires and never left the bridge; the web UI
   reported it as "no answer" from the lamp.

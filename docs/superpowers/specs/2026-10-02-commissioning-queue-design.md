@@ -248,6 +248,19 @@ card on (4.4).
   device is advertising yet". The attempt continues.
 - **Failure:** the card becomes `failed` with the classified reason; the
   worker goes on with the next card.
+- **A Bluetooth connection that never holds** (added 2026-11-08): once the
+  device was seen (`found` or `connected`), if 20 s pass and BlueZ never
+  showed it connected for 5 s at a stretch, the card becomes `failed` at
+  once with the note "The Bluetooth connection to the device kept breaking
+  off ...". Measured on the test Pi that night: the adapter aborted every
+  connection to a TIMMERFLOTTE within 1-2 s (`le-connection-abort-by-local`),
+  matter.js gave up after three tries, and matter-server still answered
+  only at its 180 s discovery timeout - twice, with the retry. A real
+  commissioning keeps the connection up through PASE and the network
+  setup, so it is never cut short. matter-server's call is not cancelled:
+  the worker, holding the radio, waits for its answer before the next card,
+  does not try again, and still finishes a card whose device was
+  commissioned after all.
 - **matter-server disconnected:** the worker does not start a new card and
   resumes when the source is connected again; a running card fails with
   `matter_server_unreachable`.

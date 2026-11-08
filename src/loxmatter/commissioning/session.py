@@ -94,6 +94,18 @@ AUTO_SCAN_MIN_INTERVAL: Final = 60.0
 # forgetting a device it no longer hears.
 REFRESH_SCAN_AFTER_SECONDS: Final = 20.0
 EARLY_WARNING_SECONDS: Final = 20.0
+# Fail fast on a Bluetooth connection that never holds (2026-11-08,
+# measured on the test Pi): the Pi's adapter aborted every connection to a
+# TIMMERFLOTTE within 1-2 s (`le-connection-abort-by-local`), matter.js gave
+# up after three tries - and then answered `commission_with_code` only at
+# its own 180 s discovery timeout, with the card showing "running" all the
+# while (and the retry below adding another 180 s). A real commissioning
+# keeps the BLE connection up through PASE and the network setup, for many
+# seconds; an attempt whose device has been seen for `NO_PROGRESS_SECONDS`
+# without ever staying connected for `HELD_CONNECTION_SECONDS` is shown as
+# failed right away.
+NO_PROGRESS_SECONDS: Final = 20.0
+HELD_CONNECTION_SECONDS: Final = 5.0
 CHECK_BLINK_SECONDS: Final = 3
 # How often the worker looks at the tracker and BlueZ while a card runs -
 # the tracker's own sampling cadence (design 2026-09-22, section 5.1).
@@ -696,10 +708,11 @@ class CommissioningSession:
         room = card.room
         card.state = "running"
         card.phase = None
-        monitor = asyncio.ensure_future(self._monitor(card))
+        stalled = asyncio.Event()
+        monitor = asyncio.ensure_future(self._monitor(card, stalled))
         try:
             try:
-                result = await self._commission(card, code, room, client)
+                result = await self._commission_watched(card, code, room, client, stalled)
             except CommissionFailed as exc:
                 if exc.reason != "connection_lost" or not self._uses_bluetooth(card):
                     raise
@@ -709,7 +722,12 @@ class CommissioningSession:
                 # 180 s for it (15 October 2026).
                 logger.info("Card %s lost its Bluetooth connection; scanning again", card.id)
                 await self._refresh_before(card, always=True)
-                result = await self._commission(card, code, room, client)
+                stalled.clear()
+                result = await self._commission_watched(card, code, room, client, stalled)
+            if result is None:
+                # Shown as failed while matter-server still waited (see
+                # `NO_PROGRESS_SECONDS`), and it failed in the end.
+                return
         except CommissionFailed as exc:
             card.state = "failed"
             card.note = exc.detail
@@ -744,6 +762,44 @@ class CommissioningSession:
                 if self._naming[0] == card.id:
                     await self._quietly(self._identify.start(result.device_id, renew=True))
 
+    async def _commission_watched(
+        self,
+        card: Card,
+        code: str,
+        room: str | None,
+        client: BridgeMatterClient,
+        stalled: asyncio.Event,
+    ) -> CommissionResult | None:
+        """`_commission`, with the card shown as failed as soon as the
+        monitor sets `stalled` (see `NO_PROGRESS_SECONDS`).
+
+        matter-server's call is not cancelled: it goes on until it answers,
+        and the worker - holding the radio - waits for it, so the next card
+        never starts while matter-server still commissions. When it answers
+        after the card was shown as failed, a failure is `None` (no second
+        try: the radio, not the address, was the problem), and a success
+        still finishes the card - the device is commissioned."""
+        job = asyncio.ensure_future(self._commission(card, code, room, client))
+        waiter = asyncio.ensure_future(stalled.wait())
+        try:
+            await asyncio.wait({job, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+        if job.done():
+            return job.result()
+        logger.info("Card %s: the Bluetooth connection never held; shown as failed", card.id)
+        card.state = "failed"
+        card.note = i18n.t("web.commissioning.note_bluetooth_aborted")
+        try:
+            result = await job
+        except Exception as exc:  # noqa: BLE001 - already shown as failed
+            logger.info("Card %s: matter-server gave up too: %s", card.id, type(exc).__name__)
+            return None
+        card.state = "running"
+        card.note = None
+        return result
+
     async def _commission(
         self, card: Card, code: str, room: str | None, client: BridgeMatterClient
     ) -> CommissionResult:
@@ -759,8 +815,10 @@ class CommissioningSession:
             manual_dataset=self._thread_dataset,
         )
 
-    async def _monitor(self, card: Card) -> None:
-        """Phase and early warning while a card runs (design 8.3)."""
+    async def _monitor(self, card: Card, stalled: asyncio.Event) -> None:
+        """Phase and early warning while a card runs (design 8.3), and
+        `stalled` once the device was seen but its Bluetooth connection
+        never held (see `NO_PROGRESS_SECONDS`)."""
         payload = card.payload
         discriminator = discriminator_for(payload) if payload is not None else None
         watch = discriminator is not None and not (
@@ -768,19 +826,42 @@ class CommissioningSession:
         )
         last_seen = self._clock()
         warned = False
+        found_at: float | None = None
+        connected_since: float | None = None
+        held = False
         while True:
             phase = self._tracker.phase
             card.phase = phase
+            if phase in (None, "searching"):
+                # A new attempt (the retry) starts over.
+                found_at = connected_since = None
+                held = False
             if watch and discriminator is not None:
                 try:
                     snapshot = await self._reader.snapshot()
                 except Exception as exc:  # noqa: BLE001 - only a hint
                     logger.info("Reading BlueZ during commissioning failed: %s", exc)
                     snapshot = None
-                if snapshot is not None and any(
-                    discriminator.matches(advert.discriminator) for advert in snapshot.adverts
-                ):
+                matching = (
+                    [a for a in snapshot.adverts if discriminator.matches(a.discriminator)]
+                    if snapshot is not None
+                    else []
+                )
+                if matching:
                     last_seen = self._clock()
+                now = self._clock()
+                if phase in ("found", "connected"):
+                    if found_at is None:
+                        found_at = now
+                    if snapshot is not None and any(a.connected for a in matching):
+                        if connected_since is None:
+                            connected_since = now
+                        if now - connected_since >= HELD_CONNECTION_SECONDS:
+                            held = True
+                    elif snapshot is not None:
+                        connected_since = None
+                    if snapshot is not None and not held and now - found_at >= NO_PROGRESS_SECONDS:
+                        stalled.set()
                 if phase == "searching" and self._clock() - last_seen >= EARLY_WARNING_SECONDS:
                     card.note = i18n.t("web.commissioning.note_no_signal_yet")
                     warned = True
