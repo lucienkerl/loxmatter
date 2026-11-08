@@ -1363,22 +1363,19 @@ def test_the_dev_build_carries_version_and_commit_build_args(updater):
 
 def test_old_locally_built_images_are_pruned(updater):
     """Design addendum, "Pruning": every dev update leaves an image
-    behind, and nothing removed it before this fix - `scripts/update.sh`'s
-    own "keep the last ten, delete the rest" rule (already mirrored here
-    for backups, just above) needed the identical treatment for locally
-    built images, or an SD card fills up one update at a time.
+    behind. Only the two newest stay - the running one and its predecessor
+    for a rollback: at about 430 MB each, four dev updates in one night
+    filled the maintainer's 14 GB SD card on 8 November 2026, and the
+    Matter server then failed every commissioning with ENOSPC.
 
     The docker stub below answers `docker images --filter
     reference=<image>:local-* --format {{.Tag}}` with eleven canned tags,
-    newest first (`local-t01` .. `local-t11`) - modelling eleven images
-    already on disk from earlier dev updates, exactly the way a real
-    `docker images` (which itself lists newest first with no extra sort
-    needed) would answer. `tail -n +11` must keep the ten newest and
-    remove only the eleventh, oldest one.
+    newest first (`local-t01` .. `local-t11`), the way a real `docker
+    images` lists them. `tail -n +3` must keep the two newest and remove
+    the other nine.
 
-    Bite-checked by removing the whole prune block: this test then fails
-    on the "docker rmi ... local-t11" assertion, since nothing ever calls
-    `docker rmi` at all."""
+    Bite-checked by keeping the old `tail -n +11`: this test then fails on
+    the "docker rmi ... local-t03" assertion."""
     tags = [f"local-t{i:02d}" for i in range(1, 12)]
     images_case = 'printf "%s\\n" ' + " ".join(f'"{tag}"' for tag in tags) + " ;; "
     docker_path = updater.bindir / "docker"
@@ -1391,9 +1388,38 @@ def test_old_locally_built_images_are_pruned(updater):
         "docker images --filter reference=ghcr.io/lucienkerl/loxmatter:local-* --format {{.Tag}}"
         in calls
     )
-    for tag in tags[:10]:
+    for tag in tags[:2]:
         assert f"docker rmi ghcr.io/lucienkerl/loxmatter:{tag}" not in calls
-    assert "docker rmi ghcr.io/lucienkerl/loxmatter:local-t11" in calls
+    for tag in tags[2:]:
+        assert f"docker rmi ghcr.io/lucienkerl/loxmatter:{tag}" in calls
+
+
+def test_a_dev_build_first_removes_every_local_image_but_the_running_one(updater):
+    """2026-11-08: the post-success prune alone left the maintainer's Pi
+    with 294 MB free, less than one image - the next build would fill the
+    card again. Before building, every `local-*` image but the running
+    one ($FROM, from the .env) goes.
+
+    Bite-checked by removing the pre-build prune: `local-t02` is then
+    only removed after the build, by the post-success prune - this test
+    checks the order."""
+    tags = ["local-t01", "local-cafefeed", "local-t03"]
+    images_case = 'printf "%s\\n" ' + " ".join(f'"{tag}"' for tag in tags) + " ;; "
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(images_case=images_case, version="dev", commit="cafefeed"),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    (updater.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=local-cafefeed\n", encoding="utf-8")
+    _write_request(updater, channel="dev", target="abcdef1234567890abcdef1234567890abcdef12")
+    _, calls, _ = updater()
+    lines = calls.splitlines()
+    build_at = next(i for i, line in enumerate(lines) if line.startswith("docker build "))
+    removed_before = [line for line in lines[:build_at] if line.startswith("docker rmi")]
+    assert "docker rmi ghcr.io/lucienkerl/loxmatter:local-t01" in removed_before
+    assert "docker rmi ghcr.io/lucienkerl/loxmatter:local-t03" in removed_before
+    assert not any("local-cafefeed" in call for call in removed_before)
 
 
 def test_a_dev_channel_rollback_rebuilds_the_previous_commit(unhealthy_service):

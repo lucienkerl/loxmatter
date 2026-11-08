@@ -632,6 +632,16 @@ images need the same treatment, or an SD card fills up one update at a
 time. This is a new failure mode the feature is introducing, not one it
 inherits, and it belongs in the same commit as the build.
 
+*Amended 2026-11-08:* locally built images keep the two newest, not ten -
+the running one and its predecessor for a rollback. An image is about
+430 MB; four development updates in one night filled the maintainer's
+14 GB SD card to its last byte, and the Matter server then failed every
+commissioning with "no space left on device" and could not commit its own
+storage. Before a build, every locally built image but the running one is
+removed as well: cleaning up after that night left 294 MB, less than one
+image, so a prune that only ran after a successful build would never have
+been reached. Backups keep their ten.
+
 ### What does not change
 
 The stable channel. It pulls published images, from the fixed repository,
