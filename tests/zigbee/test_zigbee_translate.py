@@ -28,7 +28,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import pytest
+import zigpy.zcl.clusters.general as zigpy_general
+import zigpy.zcl.clusters.lighting as zigpy_lighting
 
+from loxmatter.commands.translate import (
+    colour_temperature_payload,
+    hue_saturation_payload,
+    level_payload,
+    xy_payload,
+)
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -892,3 +900,31 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
     assert pickers(0x18, device_type=0x7FFF) == ([], [])
     assert pickers(0x19, device_type=0x0220) == (["color", "color_xy"], ["color"])
     assert pickers(0x1F) == (["color", "color_xy"], ["color"])
+
+
+@pytest.mark.parametrize(
+    ("cluster_class", "command_id", "payload"),
+    [
+        ("Color", 6, hue_saturation_payload(0, 254)),
+        ("Color", 7, xy_payload(20000, 20000)),
+        ("Color", 10, colour_temperature_payload(2700)),
+        ("LevelControl", 0, level_payload(128)),
+        ("LevelControl", 4, level_payload(128)),
+    ],
+)
+def test_every_light_payload_fills_every_field_zigpy_requires(cluster_class, command_id, payload):
+    """Checked against zigpy's own command schema, not a copy of it: a
+    required field the payload lacks makes zigpy raise before anything goes
+    on air. The colour temperature payload went without `transitionTime`
+    until 8 November 2026, and colour temperature failed on every Zigbee
+    lamp.
+
+    Fault to prove it: drop `transitionTime` from
+    `colour_temperature_payload`."""
+    cluster = getattr(zigpy_lighting, cluster_class, None) or getattr(zigpy_general, cluster_class)
+    schema = cluster.server_commands[command_id].schema
+    fields = {field.name: field for field in schema.fields}
+    renamed = rename_payload(cluster.cluster_id, command_id, payload, frozenset(fields))
+    missing = [name for name, field in fields.items() if not field.optional and name not in renamed]
+    assert missing == []
+    schema(**renamed)  # zigpy builds the command without complaint

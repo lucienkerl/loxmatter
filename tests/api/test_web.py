@@ -3234,13 +3234,8 @@ async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
         in script
     )
     assert "Bedienelemente konnten nicht geladen werden" not in script
-    assert 'return t("web.devices.export_never");' in script
-    assert "Noch nicht exportiert" not in script
-    assert (
-        'return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });'
-        in script
-    )
-    assert "Zuletzt exportiert am" not in script
+    assert 'return t("web.devices.export_matches_file");' in script
+    assert "Wie in der Projektdatei" not in script
 
     # `saveLabel` shares its write path with `saveGroupLabel` since the fix
     # of 2026-09-11 (`saveEntityLabel`) - the error field it writes into is
@@ -4734,17 +4729,12 @@ async def test_the_group_changed_pill_is_wired_into_the_export_tabs_group_table(
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-async def test_a_changed_group_shows_the_marker_a_re_exported_one_does_not(api):
-    """The behavioural counterpart of the markup-wiring test above: runs
-    the REAL `updated_at`/`exported_at` comparison end to end -
-    `Store.changed_since_export` (already exhaustively exercised in
-    `test_export_api.py`) through `GET /api/export/status`, shaped
-    exactly as `loadExportStatus()` shapes `exportStatusByGroup` in
-    `app.js` - into the real `groupChangedSinceExport` running in node.
-    Not a hand-typed status object, which could only ever prove agreement
-    with itself, and not a second implementation of the comparison either
-    - it is the same one `_group_changed_since_export` (api/export.py)
-    calls."""
+async def test_the_export_status_still_reports_a_changed_group_after_a_download(api):
+    """`GET /api/export/status` keeps its `updated_at`/`exported_at`
+    comparison for the template ZIP's "only pending" download. The marker
+    on the export screen no longer reads it: since 8 November 2026 it
+    compares with the project file read in (see
+    `test_the_export_screen_compares_only_with_the_uploaded_project_file`)."""
     client, store, device_id = api
     await authenticate(store, client)
     group = store.create_group("Solo", [device_id])
@@ -4763,17 +4753,6 @@ async def test_a_changed_group_shows_the_marker_a_re_exported_one_does_not(api):
     status = (await client.get("/api/export/status")).json()
     changed_entry = next(e for e in status if e.get("group_id") == group.id)
     assert changed_entry["changed_since_export"] is True
-
-    values = _app_state(
-        f"""
-        state.exportStatusByGroup = {{ {unchanged_entry["group_id"]}: {json.dumps(unchanged_entry)} }};
-        const unchanged = state.groupChangedSinceExport({unchanged_entry["group_id"]});
-        state.exportStatusByGroup = {{ {changed_entry["group_id"]}: {json.dumps(changed_entry)} }};
-        const changed = state.groupChangedSinceExport({changed_entry["group_id"]});
-        console.log(JSON.stringify({{ unchanged, changed }}));
-        """
-    )
-    assert values == {"unchanged": False, "changed": True}
 
 
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
@@ -18188,3 +18167,44 @@ def test_next_waits_for_the_chosen_zigbee_devices_to_be_entered():
         """
     )
     assert values == {"before": True, "after": False, "unticked": False}
+
+
+def test_the_export_screen_compares_only_with_the_uploaded_project_file():
+    """2026-11-08, at the user's request: "changed" on the export screen
+    and on the tiles means "differs from the project file read in", never
+    "changed since a ZIP download stamped `exported_at`" - the project
+    sync, the way people actually export, never stamps it. Before a file is
+    read, nothing is marked; afterwards, an owner is marked when one of its
+    plan entries is not unchanged - an orphan by the owner in its key."""
+    values = _app_state(
+        """
+        const before = {
+          compared: state.exportCompared(),
+          tile: state.changedSinceExport(1),
+          hint: state.exportHintFor(1),
+        };
+        state.projectSync.plan = { entries: [
+          { owner_kind: "device", device_id: 1, key: "d1_1_onoff", status: "unchanged" },
+          { owner_kind: "device", device_id: 2, key: "d2_1_level", status: "updated" },
+          { owner_kind: "group", device_id: 1, key: "g1_on", status: "new_signal" },
+          { owner_kind: "device", device_id: -1, key: "d3_1_on", status: "orphaned" },
+        ] };
+        console.log(JSON.stringify({
+          before,
+          compared: state.exportCompared(),
+          d1: state.changedSinceExport(1),
+          d2: state.changedSinceExport(2),
+          d3: state.changedSinceExport(3),
+          g1: state.groupChangedSinceExport(1),
+          hint1: state.exportHintFor(1),
+          hint2: state.exportHintFor(2),
+        }));
+        """
+    )
+    assert values["before"] == {"compared": False, "tile": False, "hint": ""}
+    assert values["compared"] is True
+    assert (values["d1"], values["d2"], values["d3"], values["g1"]) == (False, True, True, True)
+    # The tile's line: "matches" for an unchanged device, nothing beside
+    # the pill of one that differs.
+    assert values["hint1"]  # the matches-the-file text (no catalogue loaded here)
+    assert values["hint2"] == ""

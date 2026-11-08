@@ -537,7 +537,16 @@ def test_a_call_carries_the_commands_technology_and_address():
             6,
             "200302700",
             [
-                (768, 10, {"colorTemperatureMireds": 370, "optionsMask": 1, "optionsOverride": 1}),
+                (
+                    768,
+                    10,
+                    {
+                        "colorTemperatureMireds": 370,
+                        "transitionTime": 0,
+                        "optionsMask": 1,
+                        "optionsOverride": 1,
+                    },
+                ),
                 (8, 4, {"level": 76, "transitionTime": 0}),
             ],
         ),
@@ -546,7 +555,16 @@ def test_a_call_carries_the_commands_technology_and_address():
             7,
             "200302700",
             [
-                (768, 10, {"colorTemperatureMireds": 370, "optionsMask": 1, "optionsOverride": 1}),
+                (
+                    768,
+                    10,
+                    {
+                        "colorTemperatureMireds": 370,
+                        "transitionTime": 0,
+                        "optionsMask": 1,
+                        "optionsOverride": 1,
+                    },
+                ),
                 (8, 4, {"level": 76, "transitionTime": 0}),
             ],
         ),

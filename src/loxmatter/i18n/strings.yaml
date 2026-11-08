@@ -1581,8 +1581,9 @@ web.devices.empty:
   en: "No device commissioned yet."
   de: "Noch kein Gerät eingelernt."
 web.devices.changed_since_export:
-  en: "Changed since export"
-  de: "Geändert seit Export"
+  # Compared with the project file read in on the export screen (2026-11-08).
+  en: "Differs from project file"
+  de: "Weicht von Projektdatei ab"
 web.devices.offline:
   en: "Offline"
   de: "Offline"
@@ -1654,12 +1655,9 @@ web.devices.list_load_error:
 web.devices.controls_load_error:
   en: "Could not load controls: {message}"
   de: "Bedienelemente konnten nicht geladen werden: {message}"
-web.devices.export_never:
-  en: "Not exported yet"
-  de: "Noch nicht exportiert"
-web.devices.export_last:
-  en: "Last exported on {timestamp}"
-  de: "Zuletzt exportiert am {timestamp}"
+web.devices.export_matches_file:
+  en: "Matches the project file"
+  de: "Wie in der Projektdatei"
 web.devices.label_save_error:
   en: "Could not save name: {message}"
   de: "Name konnte nicht gespeichert werden: {message}"
@@ -4221,8 +4219,8 @@ web.export.overview_filter_all:
   en: "All"
   de: "Alle"
 web.export.overview_filter_changed:
-  en: "Changed only ({count})"
-  de: "Nur geändert ({count})"
+  en: "Differences only ({count})"
+  de: "Nur Abweichungen ({count})"
 web.export.overview_no_room:
   en: "No room"
   de: "Ohne Raum"
@@ -4239,11 +4237,11 @@ web.export.overview_room_devices_many:
   en: "{count} devices"
   de: "{count} Geräte"
 web.export.overview_room_changed:
-  en: "{count} changed"
-  de: "{count} geändert"
+  en: "{count} differ"
+  de: "{count} abweichend"
 web.export.overview_room_current:
-  en: "Up to date"
-  de: "Aktuell"
+  en: "Matches the file"
+  de: "Wie in der Datei"
 web.export.overview_group_sub:
   en: "Group · {members}"
   de: "Gruppe · {members}"
@@ -4319,12 +4317,21 @@ web.export.summary_via_group_one:
 web.export.summary_via_group_many:
   en: "{count} devices are switched only through their group."
   de: "{count} Geräte werden nur über ihre Gruppe geschaltet."
-web.export.summary_changed_one:
-  en: "1 entry has changed since the last export."
-  de: "1 Eintrag hat sich seit dem letzten Export geändert."
-web.export.summary_changed_many:
-  en: "{count} entries have changed since the last export."
-  de: "{count} Einträge haben sich seit dem letzten Export geändert."
+web.export.summary_not_compared:
+  en: "Read in your Loxone project file to see what differs from it."
+  de: "Lesen Sie Ihre Loxone-Projektdatei ein, um zu sehen, was davon abweicht."
+web.export.summary_matches_file:
+  en: "Everything matches the project file you read in."
+  de: "Alles stimmt mit der eingelesenen Projektdatei überein."
+web.export.summary_differs_one:
+  en: "1 entry differs from the project file you read in."
+  de: "1 Eintrag weicht von der eingelesenen Projektdatei ab."
+web.export.summary_differs_many:
+  en: "{count} entries differ from the project file you read in."
+  de: "{count} Einträge weichen von der eingelesenen Projektdatei ab."
+web.export.overview_differs:
+  en: "Differs from file"
+  de: "Weicht von Datei ab"
 web.export.summary_update_project:
   en: "Update Loxone project"
   de: "Loxone-Projekt aktualisieren"

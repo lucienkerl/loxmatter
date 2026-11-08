@@ -60,7 +60,8 @@ built from the same scoped lists as the export itself:
 - rooms in name order, "no room" last; in each room the groups first, then
   the devices that are not group members;
 - per group: its output capabilities, its members with their mode and
-  capabilities, and whether it changed since the last export;
+  capabilities, and whether it changed since the last export (see
+  section 4 for what the screen compares with);
 - per device: technology, transport, input and output capabilities, changed
   since export;
 - totals: groups, devices exported on their own, inputs, outputs, members
@@ -89,3 +90,27 @@ phone) shows the totals and holds both actions: "Update Loxone project"
 The template preview table moved into a folded "Templates in detail" section:
 it still names the files the ZIP will contain, for whoever imports
 templates by hand.
+
+## 4. Compared with the project file, not with a download
+
+Amended 2026-11-08, at the user's request. The first version marked an
+entry "changed since the last export" by `updated_at` against
+`exported_at`, and only a template ZIP download stamps `exported_at`. The
+project-file sync - the way the user actually exports - never does, so
+after updating the Loxone project everything still read as changed.
+
+The screen now compares only with a project file read in on it:
+
+- Before a file is read, nothing is marked: rooms are open, the
+  "Differences only" filter is hidden, and the summary says no file has
+  been compared yet.
+- After the file is read, a group or device is marked "differs from file"
+  when one of its plan entries is not `unchanged`. An orphaned entry has
+  no device any more and is attributed by the owner in its key
+  (`d{id}_...` / `g{id}_...`).
+- The device tiles follow the same rule: "Matches the project file" or the
+  "Differs from project file" pill, and neither before a file is read. The
+  old "Last exported on ..." line is gone.
+
+`GET /api/export/status` and its `changed_since_export` stay as they are:
+the template ZIP's "only pending" download still uses them.

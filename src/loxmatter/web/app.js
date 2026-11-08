@@ -2146,14 +2146,11 @@ function app() {
       return status ? status.exported_at : null;
     },
 
-    // Like `ExportStatusOut.changed_since_export` server-side: without a
-    // loaded status (e.g. a device that was just commissioned, before the
-    // next `loadExportStatus` round has gone through), "changed" applies -
-    // the same cautious assumption as on the server (see api/export.py,
-    // `_changed_since_export`).
+    // Since 2026-11-08 the tile's pill compares with the project file read
+    // in on the export screen, not with `exported_at` - see
+    // `exportPlanChangedOwners`. Before a file is read: no pill.
     changedSinceExport(deviceId) {
-      const status = this.exportStatusFor(deviceId);
-      return status ? status.changed_since_export : true;
+      return this.exportOwnerChanged("d", deviceId);
     },
 
     // Group counterparts of the two above (final fix pass, review finding
@@ -2169,16 +2166,18 @@ function app() {
     },
 
     groupChangedSinceExport(groupId) {
-      const status = this.groupExportStatusFor(groupId);
-      return status ? status.changed_since_export : true;
+      return this.exportOwnerChanged("g", groupId);
     },
 
+    // The tile's export line names the project file read in on the export
+    // screen, never a ZIP download (2026-11-08): nothing before a file is
+    // read, "matches" when the device's entries are all unchanged, and
+    // nothing when they differ - the pill beside it says that.
     exportHintFor(deviceId) {
-      const status = this.exportStatusFor(deviceId);
-      if (!status || !status.exported_at) {
-        return t("web.devices.export_never");
+      if (!this.exportCompared() || this.changedSinceExport(deviceId)) {
+        return "";
       }
-      return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });
+      return t("web.devices.export_matches_file");
     },
 
     // Classes for the tile's color stripe (style.css, `.device-card`) - a
@@ -5979,13 +5978,57 @@ function app() {
       return group.members.filter((m) => m.mode !== "group").length;
     },
 
+    /** Owners ("d12", "g3") whose objects differ from the uploaded
+     * project file, from the project-sync plan - `null` while no file has
+     * been read in this session.
+     *
+     * The only comparison the export screen makes (2026-11-08, at the
+     * user's request): "changed since the last export" depended on a ZIP
+     * download stamping `exported_at`, and the project sync - the way
+     * people actually export - never does, so everything read as changed
+     * forever. The uploaded file is what Loxone really has. An orphaned
+     * object counts too: it is left in the file for the user to remove;
+     * its owner comes from its key (`d12_...`), as the plan carries no id
+     * for it. */
+    exportPlanChangedOwners() {
+      const plan = this.projectSync.plan;
+      if (!plan || !plan.entries) return null;
+      const owners = new Set();
+      for (const entry of plan.entries) {
+        if (this.projectSyncStatusBucket(entry.status) === "unchanged") continue;
+        if (entry.device_id >= 0) {
+          owners.add((entry.owner_kind === "group" ? "g" : "d") + entry.device_id);
+        } else {
+          const match = /^([dg]\d+)_/.exec(entry.key);
+          if (match) owners.add(match[1]);
+        }
+      }
+      return owners;
+    },
+
+    exportCompared() {
+      return this.exportPlanChangedOwners() !== null;
+    },
+
+    exportOwnerChanged(kind, id) {
+      const owners = this.exportPlanChangedOwners();
+      return owners !== null && owners.has(kind + id);
+    },
+
+    exportGroupChanged(group) {
+      return (
+        this.exportOwnerChanged("g", group.group_id) ||
+        group.members.some((m) => this.exportOwnerChanged("d", m.device_id))
+      );
+    },
+
     exportRoomChangedCount(room) {
       let count = 0;
       for (const group of room.groups) {
-        if (group.changed_since_export) count += 1;
-        count += group.members.filter((m) => m.changed_since_export).length;
+        if (this.exportOwnerChanged("g", group.group_id)) count += 1;
+        count += group.members.filter((m) => this.exportOwnerChanged("d", m.device_id)).length;
       }
-      return count + room.devices.filter((d) => d.changed_since_export).length;
+      return count + room.devices.filter((d) => this.exportOwnerChanged("d", d.device_id)).length;
     },
 
     exportRoomMeta(room) {
@@ -6023,13 +6066,15 @@ function app() {
       return device.technology === "zigbee" ? "Zigbee" : "Matter";
     },
 
-    /** A room starts open when something in it changed; searching opens
+    /** A room starts open when it differs from the uploaded project file; searching opens
      * every room it found something in. A room the user opened or closed
      * stays that way. */
     exportRoomOpen(room) {
       if (this.exportSearch.trim()) return true;
       const key = this.exportRoomKey(room);
       if (key in this.exportOpenRooms) return this.exportOpenRooms[key];
+      // Before a project file is read, nothing tells rooms apart: all open.
+      if (!this.exportCompared()) return true;
       return this.exportRoomChangedCount(room) > 0;
     },
 
@@ -6070,11 +6115,7 @@ function app() {
       const rooms = [];
       for (const room of this.exportOverview.rooms) {
         const groups = room.groups.filter((group) => {
-          if (
-            this.exportChangedOnly &&
-            !group.changed_since_export &&
-            !group.members.some((m) => m.changed_since_export)
-          ) {
+          if (this.exportChangedOnly && !this.exportGroupChanged(group)) {
             return false;
           }
           return (
@@ -6084,7 +6125,7 @@ function app() {
         });
         const devices = room.devices.filter(
           (device) =>
-            (!this.exportChangedOnly || device.changed_since_export) &&
+            (!this.exportChangedOnly || this.exportOwnerChanged("d", device.device_id)) &&
             this.exportMatches(device.label, room, device.inputs, device.outputs),
         );
         if (groups.length + devices.length > 0) rooms.push({ ...room, groups, devices });
@@ -6093,7 +6134,8 @@ function app() {
     },
 
     exportChangedTotal() {
-      return this.exportOverview ? this.exportOverview.totals.changed : 0;
+      if (!this.exportOverview) return 0;
+      return this.exportOverview.rooms.reduce((sum, room) => sum + this.exportRoomChangedCount(room), 0);
     },
 
     exportSummaryViaGroup() {
@@ -6105,11 +6147,12 @@ function app() {
     },
 
     exportSummaryChanged() {
+      if (!this.exportCompared()) return t("web.export.summary_not_compared");
       const count = this.exportChangedTotal();
-      if (count === 0) return "";
+      if (count === 0) return t("web.export.summary_matches_file");
       return count === 1
-        ? t("web.export.summary_changed_one")
-        : t("web.export.summary_changed_many", { count });
+        ? t("web.export.summary_differs_one")
+        : t("web.export.summary_differs_many", { count });
     },
 
     exportBridgeLine() {

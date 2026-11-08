@@ -1644,14 +1644,11 @@
                   </div>
 
                   <div class="device-foot">
-                    <span class="hint" x-text="exportHintFor(device.id)"></span>
-                    <!-- Order deliberate: the hint first names the
-                         export time ("Last exported on ..." /
-                         "Never exported"), the pill immediately adds
-                         the associated deviation right after ("...and changed
-                         since") - the same subject-predicate order as
-                         in running text, not pill first and timestamp
-                         afterward.
+                    <span class="hint" x-show="exportHintFor(device.id)" x-text="exportHintFor(device.id)"></span>
+                    <!-- Compared with the project file read in on the
+                         export screen (2026-11-08): the hint says "matches
+                         the project file", the pill says it differs; before
+                         a file is read, neither shows.
 
                          NO MORE `isOnline(device) &&` in the condition
                          (2026-09-06). As long as the pill sat up in the
@@ -2033,7 +2030,12 @@
                   :aria-label="t('web.export.overview_search_label')"
                 />
               </label>
-              <div class="segmented" role="group" :aria-label="t('web.export.overview_filter_label')">
+              <div
+                class="segmented"
+                role="group"
+                :aria-label="t('web.export.overview_filter_label')"
+                x-show="exportCompared()"
+              >
                 <button
                   type="button"
                   :class="{ active: !exportChangedOnly }"
@@ -2083,7 +2085,7 @@
                   ></span>
                   <span
                     class="hint"
-                    x-show="exportRoomChangedCount(room) === 0"
+                    x-show="exportCompared() && exportRoomChangedCount(room) === 0"
                     x-text="t('web.export.overview_room_current')"
                   ></span>
                 </button>
@@ -2115,8 +2117,8 @@
                         </div>
                         <span
                           class="status-pill warn"
-                          x-show="group.changed_since_export"
-                          x-text="t('web.devices.changed_since_export')"
+                          x-show="exportOwnerChanged('g', group.group_id)"
+                          x-text="t('web.export.overview_differs')"
                         ></span>
                       </div>
                       <div class="export-members" x-show="group.members.length > 0">
@@ -2168,6 +2170,11 @@
                                 <option value="status" :selected="member.mode === 'status'" x-text="t('web.export.overview_mode_status')"></option>
                                 <option value="full" :selected="member.mode === 'full'" x-text="t('web.export.overview_mode_full')"></option>
                               </select>
+                              <span
+                                class="status-pill warn"
+                                x-show="exportOwnerChanged('d', member.device_id)"
+                                x-text="t('web.export.overview_differs')"
+                              ></span>
                             </div>
                           </template>
                         </div>
@@ -2205,8 +2212,8 @@
                       </div>
                       <span
                         class="status-pill warn"
-                        x-show="device.changed_since_export"
-                        x-text="t('web.devices.changed_since_export')"
+                        x-show="exportOwnerChanged('d', device.device_id)"
+                        x-text="t('web.export.overview_differs')"
                       ></span>
                     </div>
                   </template>

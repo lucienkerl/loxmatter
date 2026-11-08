@@ -20,6 +20,10 @@ people who don't know the code.
   screen to export a member on its own again, completely or with its status
   values only. Members of groups that already exist keep being exported as
   before, so no Loxone project loses inputs or outputs by updating.
+- **Export compares with your Loxone project file.** "Changed" on the export
+  screen and on the device tiles now means "differs from the project file
+  you read in", not "changed since a template download". Until a file is
+  read, nothing is marked.
 
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks
@@ -64,6 +68,12 @@ people who don't know the code.
 
 ### Fixed
 
+- **Colour temperature works on Zigbee lamps.** The command was
+  missing a field Zigbee requires and never left the bridge; the web UI
+  reported it as "no answer" from the lamp.
+- **Colour reaches Zigbee lamps that ignored it.** A colour now goes to a
+  Zigbee lamp the way Home Assistant sends it (as an XY colour point), so
+  lamps such as the Tuya TS0505B change colour.
 - **Exported outputs use the bridge's real port.** The HTTP port in exported
   outputs came from a settings field that the setup assistant could save as
   8080 while the bridge ran on another port, so Loxone sent its commands
