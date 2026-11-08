@@ -48,7 +48,13 @@ from loxmatter.projectsync.schema import (
 
 __all__ = ["PlanEntry", "PlanStatus", "SyncPlan", "build_plan"]
 
-_REQUIRED_INPUT_ATTRS = ("Title", "Check", "Analog")
+# `Analog` is not required, and a missing one means "false" (2026-11-08,
+# measured on the maintainer's project file): Loxone Config leaves an
+# attribute out when it holds its default. Every event input it had saved
+# (`V="179"`) - a digital pulse - carried no `Analog` at all, and requiring
+# it listed all 24 of them as conflicts that were skipped.
+_REQUIRED_INPUT_ATTRS = ("Title", "Check")
+_DEFAULT_ATTRS: dict[str, str] = {"Analog": "false"}
 _REQUIRED_OUTPUT_ATTRS = ("Title", "CmdOn")
 
 
@@ -128,7 +134,7 @@ def _diff_managed_attrs(
     for name in managed:
         if name not in desired:
             continue
-        old = existing.get(name, "")
+        old = existing.get(name, _DEFAULT_ATTRS.get(name, ""))
         new = desired[name]
         if old != new:
             changes[name] = (old, new)

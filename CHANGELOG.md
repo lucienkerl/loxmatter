@@ -68,6 +68,10 @@ people who don't know the code.
 
 ### Fixed
 
+- **Button inputs are no longer skipped as conflicts.** Loxone Config leaves
+  out a setting when it holds its default, and saved the button events
+  (press, long press, ...) that way. Updating the Loxone project then listed
+  them as "conflict - skipped"; they are now recognised as unchanged.
 - **A failed Bluetooth connection shows at once when adding a device.** When
   the device is found but its Bluetooth connection keeps breaking off, the
   card now says so after about 20 seconds, with what to try, instead of

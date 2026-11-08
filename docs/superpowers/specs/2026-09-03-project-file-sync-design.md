@@ -118,6 +118,13 @@ renaming a device or signal in loxmatter no longer reaches objects that
 already exist in the project file; the user renames them in Config. The
 device containers' titles were never managed and are unaffected.
 
+**Update 2026-11-08: a missing `Analog` means "false".** Loxone Config
+leaves an attribute out when it holds its default. Every event input it
+had saved (`V="179"`), a digital pulse, carried no `Analog`, and the sync,
+which required that attribute, listed all 24 inputs of two buttons as
+`conflict` and skipped them. `Analog` is no longer required on an input,
+and a missing one compares as `false`, for inputs and outputs alike.
+
 ### 3.4 Risk levels: update is the default case, creation is opt-in
 
 The real reference file parses cleanly, but the `U` ID scheme for new
