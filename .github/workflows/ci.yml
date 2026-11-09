@@ -19,6 +19,20 @@ jobs:
       # until the next feature branch - see
       # docs/superpowers/specs/2026-09-07-english-only-translation-design.md
       - run: uv run python scripts/check_language.py
+      # The zigbee2mqtt device library's catalogue and engine are generated,
+      # not committed (design 2026-11-09, section 4); its tests need them.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: herdsman/package-lock.json
+      - run: npm ci --prefix herdsman --no-audit --no-fund
+      - run: node scripts/herdsman/build.mjs
+      # The build appends new library properties to this committed file. A
+      # change here means a library update forgot to commit them - and a
+      # property without a committed number would get a different one on
+      # every build.
+      - run: git diff --exit-code src/loxmatter/profiles/vendor_properties.json
       - run: uv run pytest -v
 
   # Release gate (design "Thread setup that needs no handwork",

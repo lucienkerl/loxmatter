@@ -8,6 +8,17 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **Many more Zigbee devices: zigbee2mqtt's device library.** loxmatter now
+  also knows the 4,600 devices zigbee2mqtt describes, next to the ones Home
+  Assistant's quirks already cover. A device without a Home Assistant quirk
+  - many Tuya sensors and radars among them - now reports its readings
+  (temperature, humidity, presence, light and more) and offers its settings
+  in the "Configuration…" dialog, as described by zigbee2mqtt. Devices that
+  already work keep working exactly as before; for a device with a Home
+  Assistant quirk, zigbee2mqtt only adds settings the quirk does not offer.
+
 ## [0.7.0] — 2026-11-09
 
 ### Before you update

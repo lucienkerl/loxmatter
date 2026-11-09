@@ -2,10 +2,15 @@
 
 Design, 9 November 2026. loxmatter learns the devices that
 `zigbee-herdsman-converters` (the device library of zigbee2mqtt) describes,
-in addition to what zha-quirks already gives it. No code yet: this document
-decides how, and in which order. Every number in it was measured on
+in addition to what zha-quirks already gives it. This document decides how,
+and in which order. Every number in it was measured on
 9 November 2026 against `zigbee-herdsman-converters` 26.128.0 and
 `zigbee-herdsman` 11.2.1 from npm, unless it says otherwise.
+
+**Built on 9 November 2026**, both stages in one branch at Lucien's
+request (`beide Stufen anfangen und umsetzen`). Where the build departed
+from this design, section 14 says how and why; the sections above it are
+left as decided, so the reasoning stays readable.
 
 It builds on PR #40 (`2026-11-08-device-configuration-values-design.md`,
 not merged at the time of writing): its `ConfigOption`, the option command
@@ -452,8 +457,86 @@ Each step is its own pull request with its own implementation plan.
 
 ## 13. Open
 
-- The engine's load time and memory on a Pi 4 (section 9.1).
+- The engine's load time and memory on a Pi 4 (section 9.1). Measured only
+  in the cloud container so far: the whole bundle loads in 0.6 s.
 - Why `mini-racer` did not answer in the cloud container. It only matters
   if quickjs-ng has to be replaced.
 - Whether devices exist whose standard commands need the engine
   (section 9.6).
+- A real Tuya device and a real engine device against the built bridge.
+  The tests run the library's own definitions against captured and
+  constructed frames; no radio was involved.
+
+## 14. As Built
+
+The code is in `src/loxmatter/zigbee/herdsman/` (`catalogue`, `properties`,
+`tuya`, `zcl`, `engine`, `library`), the build in `scripts/herdsman/`, the
+tests in `tests/zigbee/test_herdsman_*.py`. What differs from the sections
+above:
+
+**One address space for every library property (8.1, 8.3, 8.4).** A
+setting is not an option on its real ZCL attribute, nor on cluster 0xEF00
+under its data-point number. Every library property - reading or setting,
+attribute, data point or engine - lives on one manufacturer cluster,
+`VENDOR_PROPERTIES_CLUSTER` (0xFFF1FC10: the Matter test vendor and a
+manufacturer cluster number), under its number from
+`src/loxmatter/profiles/vendor_properties.json`. The option's path, its
+command row, its pending write and its reading are then one and the same
+path, whichever stage serves the device, and a device that moves from the
+catalogue to the engine on a library update keeps its Loxone keys. The
+write itself still goes to the real attribute (`write_attributes_raw`,
+typed, with the catalogue's manufacturer code) or data point; only the
+address loxmatter files it under is the library's. `ConfigOption` needed no
+new fields for that.
+
+**The property numbers** are `profiles/vendor_properties.json`, not
+`herdsman/property_ids.json`: the profile table reads it, so it sits next
+to `clusters.yaml`. Each entry carries the property's most common unit and
+whether the library files it as a setting or diagnostic on most devices;
+such a property is named but `functional: false`, so it is readable without
+filling the default export. The Matter mapping (8.4) is a table in
+`properties.py` rather than a YAML file: each entry needs a conversion
+function. `presence` - what a radar reports - maps to occupancy as well.
+
+**Readings are taken from the raw tap (8.2),** not from zigpy's attribute
+cache: the tap sees the frame once, before zigpy parses it, and parses the
+report itself with zigpy's foundation types. The tap hooks
+`Device._should_filter_packet` per device, which zigpy calls first for every
+packet, so a duplicate zigpy filters is not taken twice.
+`tests/zigbee/test_herdsman_library.py` checks the hook exists.
+
+**Which library speaks for a device (7)** is decided once per device and
+connection: a device zha-quirks transformed gets only settings on ZCL
+attributes its quirk does not already offer (its data points are its
+quirk's); otherwise an `engine` definition goes to the engine and a
+`catalogue` definition to stage 1. An engine device whose engine fails to
+start, or fails three times in a row, falls back to what the catalogue
+holds of its definition rather than to nothing.
+
+**The engine never calls Python (9.3, 9.4).** quickjs-ng refuses a call
+into Python while a time limit is set, and the time limit is what stops a
+converter that loops. So the bridge queues every request to the host -
+send a frame, start a timer, keep a record, publish, answer a call - in an
+outbox, and `engine.py` collects the outbox after each call and acts on it
+on the event loop. The transaction sequence number is handed in before each
+call from zigpy's own counter.
+
+**The bridge reuses zigbee-herdsman's own `Device` and `Endpoint` (9.3)**
+instead of implementing them in JavaScript: an injected adapter turns each
+frame they encode into a send request and resolves the answer when the tap
+hands it back; an injected database hands each record to Python.
+`Endpoint.bind` goes to zigpy's ZDO.
+
+**Engine state is a file, not a table (9.4):**
+`<zigpy database>.herdsman.json`, written atomically and at most every ten
+seconds. A table would have meant a schema version, and PR #40 takes schema
+19; the file keeps this branch independent of that numbering. It also
+holds each device's last property values, so a restart shows them at once.
+
+**Configuring (9.5)** runs loxmatter's own configure-on-join first and the
+definition's `configure` (or Tuya's magic packet) after it, rather than
+instead of it. loxmatter's own readings of the same device keep working,
+and the cost - a few binds the definition would not have made - is small.
+
+**Order of work (12):** both stages in one branch, as asked. Measuring the
+engine on the Pi stays open (section 13).

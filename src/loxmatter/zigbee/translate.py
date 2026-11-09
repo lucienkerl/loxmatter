@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from loxmatter.device_config import ConfigOption, from_raw
 from loxmatter.matter.models import NodeSnapshot
@@ -59,6 +59,8 @@ from loxmatter.profiles.relevance import (
     POWER_SOURCE_DEVICE_TYPE,
     ROOT_NODE_DEVICE_TYPE,
 )
+from loxmatter.profiles.table import VENDOR_PROPERTIES_CLUSTER
+from loxmatter.zigbee.herdsman.properties import library_device_types
 
 # --------------------------------------------------------------- facts in --
 
@@ -85,8 +87,17 @@ class DeviceFacts:
     available: bool
     quirk_applied: bool
     endpoints: tuple[EndpointFacts, ...]
-    # What the quirk describes as writable (`zigbee/options.py`).
+    # What the quirk describes as writable (`zigbee/options.py`), followed by
+    # what the zigbee2mqtt device library adds (`zigbee/herdsman/`).
     config_options: tuple[ConfigOption, ...] = ()
+    # Snapshot paths and values from the device library, already Matter-
+    # shaped and on the Loxone scale (`zigbee/herdsman/properties.py`). They
+    # win over the native translation of the same path: one truth per
+    # signal (design 2026-11-09, section 9.6).
+    library_attributes: Mapping[str, object] = field(default_factory=dict)
+    # Endpoint -> Matter device type, for Tuya endpoints whose own
+    # (profile, device type) pair says nothing about what they measure.
+    library_device_types: Mapping[int, int] = field(default_factory=dict)
 
 
 # --------------------------------------------------------- device type maps --
@@ -196,8 +207,10 @@ def _all_mapped_matter_types() -> frozenset[int]:
 
     Its own inventory, read by `test_every_mapped_type_exists_in_the_matter_table`
     to guard against a typo turning into a silent "other" downstream."""
-    return frozenset(_MATTER_DEVICE_TYPE_BY_PROFILE.values()) | frozenset(
-        _MATTER_DEVICE_TYPE_BY_ZONE_TYPE.values()
+    return (
+        frozenset(_MATTER_DEVICE_TYPE_BY_PROFILE.values())
+        | frozenset(_MATTER_DEVICE_TYPE_BY_ZONE_TYPE.values())
+        | library_device_types()
     )
 
 
@@ -749,6 +762,8 @@ def _apply_config_options(facts: DeviceFacts, attributes: dict[str, object]) -> 
     value (see `build_snapshot`)."""
     by_endpoint = {endpoint.endpoint: endpoint for endpoint in facts.endpoints}
     for option in facts.config_options:
+        if option.cluster_id == VENDOR_PROPERTIES_CLUSTER:
+            continue  # the library's, placed on the Loxone scale already
         endpoint = by_endpoint.get(option.endpoint)
         if endpoint is None:
             continue
@@ -758,6 +773,17 @@ def _apply_config_options(facts: DeviceFacts, attributes: dict[str, object]) -> 
             attributes.pop(option.path, None)
             continue
         attributes[option.path] = value
+
+
+def _apply_library(facts: DeviceFacts, attributes: dict[str, object]) -> None:
+    """What the zigbee2mqtt device library reported, over the native
+    translation (design 2026-11-09, section 9.6)."""
+    for endpoint, device_type in facts.library_device_types.items():
+        attributes[_device_type_list_path(endpoint)] = [{"0": device_type, "1": 1}]
+    for path, value in facts.library_attributes.items():
+        if value is None or _is_not_a_number(value):
+            continue
+        attributes[path] = value
 
 
 def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
@@ -788,6 +814,7 @@ def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
     for endpoint in facts.endpoints:
         _apply_endpoint(endpoint, facts.model, attributes)
     _apply_config_options(facts, attributes)
+    _apply_library(facts, attributes)
 
     return NodeSnapshot(
         technology="zigbee",

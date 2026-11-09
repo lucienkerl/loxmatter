@@ -20,6 +20,19 @@
 # would need to be pulled in here no longer exists, and the mentioned reference image is
 # archived. What that means for libavahi-client3 is shown below in the
 # apt line.
+# The zigbee2mqtt device library (design 2026-11-09, section 4): its
+# catalogue and its engine bundle are generated from the npm package pinned
+# in herdsman/package-lock.json and are not in git. Node is needed only for
+# this, so it stays in a stage of its own and never reaches the image.
+FROM node:22-slim AS herdsman
+
+WORKDIR /build
+COPY herdsman/package.json herdsman/package-lock.json ./herdsman/
+RUN npm ci --prefix herdsman --no-audit --no-fund
+COPY scripts/herdsman ./scripts/herdsman
+COPY src/loxmatter/profiles/vendor_properties.json ./src/loxmatter/profiles/
+RUN node scripts/herdsman/build.mjs
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -48,6 +61,7 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+COPY --from=herdsman /build/src/loxmatter/zigbee/herdsman_data ./src/loxmatter/zigbee/herdsman_data
 COPY scripts ./scripts
 
 # Byte-compile at build time instead of at first import (research F.3, F.4;

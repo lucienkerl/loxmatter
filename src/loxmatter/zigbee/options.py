@@ -211,18 +211,35 @@ async def write_pending(device: Any, store: Any) -> bool:
     A value the device REFUSES is dropped with a warning: it will refuse it
     on every wake-up, and a row that can never clear would keep the web UI
     saying "waiting for the device" forever."""
+    from loxmatter.profiles.table import VENDOR_PROPERTIES_CLUSTER
     from loxmatter.zigbee.configure import _describe, _is_unreachable
+    from loxmatter.zigbee.herdsman.library import active
 
     address = str(device.ieee)
     pending = store.zigbee_pending
+    library = active()
     for write in pending.writes_for(address):
         endpoint = device.endpoints.get(write.endpoint)
         cluster = None if endpoint is None else endpoint.in_clusters.get(write.cluster_id)
-        if cluster is None:
+        by_library = write.cluster_id == VENDOR_PROPERTIES_CLUSTER
+        if by_library:
+            # A property of the zigbee2mqtt device library: written by the
+            # library, through its catalogue or its engine (design
+            # 2026-11-09, section 8.1).
+            if library is None or library.property_of(address, write.attribute_id) is None:
+                pending.clear_write(address, write)
+                continue
+        elif cluster is None:
             pending.clear_write(address, write)
             continue
         try:
-            result = await cluster.write_attributes({write.attribute_id: write.value})
+            if by_library:
+                assert library is not None
+                await library.write(device, write.attribute_id, write.value)
+                result: object = None
+            else:
+                assert cluster is not None
+                result = await cluster.write_attributes({write.attribute_id: write.value})
         except Exception as exc:  # noqa: BLE001 - every failure is sorted below
             if _is_unreachable(exc):
                 logger.info(
