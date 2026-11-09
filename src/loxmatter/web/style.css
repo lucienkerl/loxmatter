@@ -5347,3 +5347,52 @@ main.main-export {
 .export-overview-heading {
   margin: 1.5rem 0 0.75rem;
 }
+
+/* Configuration dialog (design 2026-11-08, section 6). One block per value,
+ * the same quiet framing as an expert section. */
+.config-option {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  margin-bottom: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.config-option-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.config-option-title {
+  font-weight: 600;
+}
+
+.config-option-state {
+  font-size: 0.82rem;
+}
+
+.config-number,
+.config-switch,
+.config-export {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-number input {
+  width: 8rem;
+}
+
+.config-option-range {
+  margin: 0;
+}
+
+.config-export {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}

@@ -76,6 +76,7 @@ import contextlib
 import errno
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -84,7 +85,9 @@ from types import ModuleType
 from typing import Any, Final, Literal
 
 from loxmatter import i18n
+from loxmatter.device_config import attribute_of_command, is_option_command
 from loxmatter.matter.models import NodeSnapshot, Technology
+from loxmatter.profiles.table import VENDOR_PROPERTIES_CLUSTER
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.radios.inventory import under_host_dev
 from loxmatter.sources import (
@@ -93,6 +96,7 @@ from loxmatter.sources import (
     IdentifyUnsupportedError,
     ReportingClosedError,
     RuntimeEventHandler,
+    SourceNotConfiguredError,
 )
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
@@ -103,8 +107,10 @@ from loxmatter.zigbee.configure import (
     PollingSchedule,
     configure_device,
     install_command_handlers,
+    request_retry,
     watch_for_wakeups,
 )
+from loxmatter.zigbee.herdsman.library import STATE_SUFFIX, Library, set_active
 from loxmatter.zigbee.migration import (
     ImportedDevice,
     NetworkIdentity,
@@ -112,6 +118,7 @@ from loxmatter.zigbee.migration import (
     network_identity,
     restore_backup,
 )
+from loxmatter.zigbee.options import config_options, missing_values, read_missing
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import (
     TRADFRI_MOTION_SENSOR_MODEL,
@@ -634,6 +641,7 @@ class ZigbeeSource:
         open_guard: OpenGuard | None = None,
         host_dev: Path | None = None,
         thread_channel_lookup: Callable[[], Awaitable[int | None]] | None = None,
+        library: Library | None = None,
     ) -> None:
         # The stick as the HOST names it - what the Thread guard compares,
         # what the log line prints and what the API reports. Never what zigpy
@@ -667,6 +675,18 @@ class ZigbeeSource:
         # be nowhere to record a sleeping device's unfinished business.
         self._store = store
         self._polling = PollingSchedule()
+        # The zigbee2mqtt device library (design 2026-11-09). Its state lives
+        # next to zigpy's database, and it tells this source about new
+        # values the same way a cluster event does: the address on the queue.
+        self._library = (
+            library
+            if library is not None
+            else Library(
+                state_file=Path(str(self._database) + STATE_SUFFIX),
+                notify=self._library_changed,
+            )
+        )
+        set_active(self._library)
 
         self._app: Any | None = None
         self._coordinator: CoordinatorInfo | None = None
@@ -1027,6 +1047,7 @@ class ZigbeeSource:
         # longer exist. Registering them again here rather than in
         # `subscribe()` is what keeps a reconnected bridge from going
         # silent while looking perfectly healthy (R1 section 6).
+        await self._start_library(app)
         self._register_cluster_listeners()
         self._set_progress("connected", attempts=0)
         self._note_coordinator(app, network_was_known=network_was_known)
@@ -1105,6 +1126,10 @@ class ZigbeeSource:
         self._release_cluster_listeners()
         self._delivered.clear()
         self._detected.clear()
+        try:
+            await self._library.close()
+        except Exception:
+            logger.exception("closing the zigbee2mqtt device library failed")
         dispatch_task, self._dispatch_task = self._dispatch_task, None
         self._queue = None
         if dispatch_task is not None:
@@ -1375,6 +1400,7 @@ class ZigbeeSource:
 
     def _facts(self, device: Any) -> DeviceFacts:
         node_desc = device.node_desc
+        contribution = self._library.contribution(device)
         return DeviceFacts(
             ieee=str(device.ieee),
             manufacturer=device.manufacturer or "",
@@ -1402,6 +1428,9 @@ class ZigbeeSource:
             endpoints=tuple(
                 self._endpoint_facts(endpoint) for endpoint in device.non_zdo_endpoints
             ),
+            config_options=config_options(device) + contribution.options,
+            library_attributes=contribution.attributes,
+            library_device_types=contribution.device_types,
         )
 
     async def _snapshot(self, device: Any) -> NodeSnapshot:
@@ -1523,6 +1552,12 @@ class ZigbeeSource:
             device = self._device_or_none(address)
             if device is not None:
                 watch_for_wakeups(device, store=self._store, polling=self._polling)
+        # A device whose configuration value the bridge has never seen gets
+        # the same watcher: its next wake-up is when the value can be read
+        # (design 2026-11-08, section 5).
+        for device in self._devices():
+            if missing_values(device):
+                watch_for_wakeups(device, store=self._store, polling=self._polling)
 
     async def _seed_baseline(self) -> None:
         """Remembers what each known device currently reads as, WITHOUT
@@ -1576,6 +1611,7 @@ class ZigbeeSource:
         clusters - under the same IEEE, and an address-keyed guard would then
         return early and leave the replacement with no listeners at all while
         the bridge kept reporting a healthy link."""
+        self._bind_library(device)
         queue = self._queue
         if queue is None:
             return
@@ -1755,6 +1791,9 @@ class ZigbeeSource:
         `move_to_level_with_on_off` carries no options fields at all, and
         offering them would make zigpy reject the whole command."""
         device = self._require_device(call.address)
+        if is_option_command(call.cluster_id, call.command_id):
+            self._queue_option_write(device, call)
+            return
         endpoint = device.endpoints.get(call.endpoint)
         cluster = None if endpoint is None else endpoint.in_clusters.get(call.cluster_id)
         command = None if cluster is None else cluster.server_commands.get(call.command_id)
@@ -1790,6 +1829,53 @@ class ZigbeeSource:
                 )
             )
 
+    def _queue_option_write(self, device: Any, call: DeviceCall) -> None:
+        """Queues a configuration value and returns (design 2026-11-08,
+        section 5). The row is written first, so a value set while the
+        device sleeps - or while the bridge restarts - is still written when
+        the device is next heard; the watcher is asked for a pass at once,
+        which is all a listening, mains-powered device needs."""
+        attribute_id = attribute_of_command(call.command_id)
+        endpoint = device.endpoints.get(call.endpoint)
+        cluster = None if endpoint is None else endpoint.in_clusters.get(call.cluster_id)
+        if call.cluster_id == VENDOR_PROPERTIES_CLUSTER:
+            # A property of the device library: no zigpy cluster, and the
+            # library knows whether this device has it.
+            known = self._library.property_of(call.address, attribute_id) is not None
+        else:
+            known = cluster is not None and attribute_id in cluster.attributes
+        if not known:
+            raise DeviceUnreachableError(
+                i18n.t(
+                    "api.errors.device_unreachable",
+                    exc=i18n.t(
+                        "api.errors.zigbee_no_such_attribute",
+                        endpoint=call.endpoint,
+                        address=call.address,
+                        attribute_id=attribute_id,
+                        cluster_id=call.cluster_id,
+                    ),
+                )
+            )
+        store = self._store
+        if store is None:
+            raise SourceNotConfiguredError(self.technology)
+        store.zigbee_pending.queue_write(
+            call.address, call.endpoint, call.cluster_id, attribute_id, call.payload["value"]
+        )
+        watch_for_wakeups(device, store=store, polling=self._polling)
+        request_retry(device)
+
+    def pending_writes(self, address: str) -> dict[tuple[int, int, int], object]:
+        """`(endpoint, cluster, attribute) -> raw value` still owed to the
+        device, for the web UI's "waiting for the device"."""
+        if self._store is None:
+            return {}
+        return {
+            (write.endpoint, write.cluster_id, write.attribute_id): write.value
+            for write in self._store.zigbee_pending.writes_for(address)
+        }
+
     async def remove(self, address: str) -> None:
         """Asks the device to leave, and forgets it either way.
 
@@ -1816,7 +1902,35 @@ class ZigbeeSource:
             logger.info("Zigbee device %s is not in the network any more - removing it", address)
         self._forget(address)
 
+    async def _start_library(self, app: Any) -> None:
+        """Loads the device library's catalogue - off the event loop, once
+        per process. Engine devices are attached in the background by
+        `_bind_library`: the engine takes seconds to start on a Pi, and the
+        radio must not wait for it."""
+        self._library.use_application(app)
+        try:
+            await self._library.load()
+        except Exception:
+            logger.exception("loading the zigbee2mqtt device library failed")
+        # Every device is bound by `_register_cluster_listeners`, next.
+
+    def _bind_library(self, device: Any) -> None:
+        if self._is_coordinator(device):
+            return
+        try:
+            if self._library.bind(device) and self._library.mode(str(device.ieee)) == "engine":
+                self._spawn(self._library.attach(device))
+        except Exception:
+            logger.exception("binding %s to the zigbee2mqtt device library failed", device.ieee)
+
+    def _library_changed(self, address: str) -> None:
+        """The library has news for a device: delivered like a cluster event."""
+        queue = self._queue
+        if queue is not None:
+            queue.put_nowait(address)
+
     def _forget(self, address: str) -> None:
+        self._library.forget(address)
         self._pairing.pop(address, None)
         self._delivered.pop(address, None)
         self._polling.forget(address)
@@ -1992,6 +2106,15 @@ class ZigbeeSource:
         self._configuring.add(address)
         try:
             await configure_device(device, store=self._store, polling=self._polling)
+            # Awake right now, so the moment to learn its configuration
+            # values (design 2026-11-08, section 5).
+            await read_missing(device, now=time.time())
+            # The device library's part comes after loxmatter's own: the
+            # definition's `configure` for an engine device, Tuya's magic
+            # packet for a catalogue one (design 2026-11-09, section 9.5).
+            self._bind_library(device)
+            await self._library.configure(device)
+            await self._library.read_missing(device)
         except Exception:
             logger.exception("configuring %s after it joined failed", address)
         finally:

@@ -31,6 +31,7 @@ data table, not as a branch in the exporter.
 from __future__ import annotations
 
 import functools
+import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -93,10 +94,53 @@ def classify(value: object) -> Exportability:
     return Exportability.NONE
 
 
+_VENDOR_PROPERTIES_PATH = Path(__file__).with_name("vendor_properties.json")
+
+# The manufacturer cluster that carries every property of the zigbee2mqtt
+# device library that no Matter cluster means (design 2026-11-09, section
+# 8.4). A Matter manufacturer-specific cluster ID: the test vendor 0xFFF1
+# and a cluster number from the manufacturer range, so it can never collide
+# with a cluster the specification defines.
+VENDOR_PROPERTIES_CLUSTER = 0xFFF1FC10
+
+# Its rank: what such a device does (an occupancy delay, a valve position)
+# sits next to the main clusters, ahead of battery and device information.
+_VENDOR_PROPERTIES_RANK = 45
+
+
+@functools.cache
+def _vendor_properties() -> dict[str, dict[str, Any]]:
+    """`profiles/vendor_properties.json`: per library property its number,
+    its most common unit and whether it is what a device is for. Committed
+    and only ever appended to by `scripts/herdsman/build.mjs`, so a number -
+    and the Loxone key built from it - never moves."""
+    raw: dict[str, dict[str, Any]] = json.loads(_VENDOR_PROPERTIES_PATH.read_text(encoding="utf-8"))
+    return raw
+
+
+@functools.cache
+def vendor_property_ids() -> dict[str, int]:
+    """Library property name to its attribute number on
+    `VENDOR_PROPERTIES_CLUSTER`."""
+    return {name: int(entry["id"]) for name, entry in _vendor_properties().items()}
+
+
 @functools.cache
 def _table() -> dict[int, dict[str, Any]]:
     raw = yaml.safe_load(_TABLE_PATH.read_text(encoding="utf-8"))
-    return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
+    table = {int(k): v for k, v in (raw.get("clusters") or {}).items()}
+    attributes: dict[int, dict[str, Any]] = {}
+    for name, entry in _vendor_properties().items():
+        attribute: dict[str, Any] = {"slug": name, "unit": entry.get("unit") or ""}
+        if entry.get("functional") is False:
+            attribute["functional"] = False
+        attributes[int(entry["id"])] = attribute
+    table[VENDOR_PROPERTIES_CLUSTER] = {
+        "name": "zigbee_library",
+        "rank": _VENDOR_PROPERTIES_RANK,
+        "attributes": attributes,
+    }
+    return table
 
 
 # The rank of a cluster the table does not carry (design

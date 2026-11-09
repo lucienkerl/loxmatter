@@ -11,6 +11,24 @@ uv run pytest
 
 The test suite runs without hardware and without network access.
 
+### The zigbee2mqtt device library
+
+The catalogue and the JavaScript engine of zigbee2mqtt's device library are
+generated from the npm package pinned in `herdsman/package-lock.json` and
+are not in git (design `2026-11-09-zigbee-herdsman-converters-design.md`).
+Build them once, with Node 22:
+
+```bash
+npm ci --prefix herdsman
+node scripts/herdsman/build.mjs
+```
+
+Without them the bridge runs as before, minus the library, and its tests
+(`tests/zigbee/test_herdsman_library.py`) are skipped. Updating the library
+is a change to `herdsman/package.json` and the lock file; the build appends
+new property names to `src/loxmatter/profiles/vendor_properties.json`, which
+must be committed with it - CI fails when it was not.
+
 ## Commit messages
 
 English, Conventional Commits — see [CLAUDE.md](../CLAUDE.md) for the full

@@ -24,7 +24,7 @@ def _columns(path: Path, table: str) -> set[str]:
 
 
 def test_schema_version_is_current():
-    assert schema_version() == 18
+    assert schema_version() == 19
 
 
 def test_register_device_stores_the_spec_version(tmp_path):

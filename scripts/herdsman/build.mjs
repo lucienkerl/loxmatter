@@ -1,0 +1,170 @@
+// loxmatter - connects Matter devices to a Loxone Miniserver.
+// Copyright (C) 2026 Lucien Kerl
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Builds everything loxmatter takes from zigbee-herdsman-converters, from the
+// version pinned in herdsman/package.json (design 2026-11-09, section 4):
+//
+//   src/loxmatter/zigbee/herdsman_data/catalogue.json  what is data (stage 1)
+//   src/loxmatter/zigbee/herdsman_data/golden.json     the matcher's test table
+//   src/loxmatter/zigbee/herdsman_data/engine.js       the library for quickjs-ng (stage 2)
+//   src/loxmatter/zigbee/herdsman_data/LICENSE, README.md
+//
+// and appends property names it has not seen before to
+// src/loxmatter/profiles/vendor_properties.json, which is committed: a
+// property keeps its number for good, so its Loxone signal keeps its key.
+//
+// Run from the repository root, after `npm ci --prefix herdsman`:
+//
+//   node scripts/herdsman/build.mjs
+
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const herdsmanDir = path.join(root, "herdsman");
+const outDir = path.join(root, "src", "loxmatter", "zigbee", "herdsman_data");
+const propertiesFile = path.join(root, "src", "loxmatter", "profiles", "vendor_properties.json");
+const here = path.join(root, "scripts", "herdsman");
+const requireFrom = createRequire(path.join(herdsmanDir, "package.json"));
+const esbuild = requireFrom("esbuild");
+
+const libraryDir = path.dirname(requireFrom.resolve("zigbee-herdsman-converters/package.json"));
+const herdsmanLibDir = path.dirname(requireFrom.resolve("zigbee-herdsman/package.json"));
+const version = JSON.parse(fs.readFileSync(path.join(libraryDir, "package.json"), "utf8")).version;
+const herdsmanVersion = JSON.parse(fs.readFileSync(path.join(herdsmanLibDir, "package.json"), "utf8")).version;
+
+fs.rmSync(outDir, { recursive: true, force: true });
+fs.mkdirSync(outDir, { recursive: true });
+
+// 1. The catalogue and the golden table, in a Node process of their own: the
+//    capture patches the module loader, which must not leak into this one.
+execFileSync(process.execPath, [path.join(here, "catalogue.cjs"), herdsmanDir, outDir], { stdio: "inherit" });
+
+// 2. The property numbers.
+const catalogue = JSON.parse(fs.readFileSync(path.join(outDir, "catalogue.json"), "utf8"));
+const known = fs.existsSync(propertiesFile) ? JSON.parse(fs.readFileSync(propertiesFile, "utf8")) : {};
+// Per property: how often each unit occurs, and how often the library files
+// it as a setting or a diagnostic rather than as what the device is for.
+const units = new Map();
+const secondary = new Map();
+for (const definition of Object.values(catalogue.definitions)) {
+  for (const expose of definition.exposes) {
+    if (!["numeric", "binary", "enum"].includes(expose.type)) continue;
+    const counts = units.get(expose.property) ?? new Map();
+    counts.set(expose.unit ?? "", (counts.get(expose.unit ?? "") ?? 0) + 1);
+    units.set(expose.property, counts);
+    const [yes, all] = secondary.get(expose.property) ?? [0, 0];
+    secondary.set(expose.property, [yes + (expose.category ? 1 : 0), all + 1]);
+  }
+}
+let next = Math.max(0, ...Object.values(known).map((entry) => entry.id)) + 1;
+const added = [];
+for (const property of [...units.keys()].sort()) {
+  if (known[property] !== undefined) continue;
+  const [unit] = [...units.get(property).entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  const [yes, all] = secondary.get(property);
+  known[property] = { id: next++, unit, functional: yes * 2 <= all };
+  added.push(property);
+}
+const sorted = Object.fromEntries(Object.entries(known).sort((a, b) => a[1].id - b[1].id));
+// One property per line, so that an update's diff shows exactly the names it adds.
+const lines = Object.entries(sorted).map(([property, entry]) => `  ${JSON.stringify(property)}: ${JSON.stringify(entry)}`);
+fs.writeFileSync(propertiesFile, `{\n${lines.join(",\n")}\n}\n`);
+
+// 3. The engine bundle.
+const vendorFiles = fs
+  .readdirSync(path.join(libraryDir, "dist", "devices"))
+  .filter((f) => f.endsWith(".js") && f !== "index.js")
+  .sort();
+const entry = [
+  "// Generated by scripts/herdsman/build.mjs - do not edit.",
+  "globalThis.__lxVendorModules = {",
+  ...vendorFiles.map(
+    (file) => `  ${JSON.stringify(file)}: () => require(${JSON.stringify(`zigbee-herdsman-converters/devices/${file.slice(0, -3)}`)}),`,
+  ),
+  "};",
+  `require(${JSON.stringify(path.join(here, "bridge.js"))});`,
+  "",
+].join("\n");
+const entryFile = path.join(herdsmanDir, "engine-entry.generated.js");
+fs.writeFileSync(entryFile, entry);
+
+const polyfills = path.join(here, "polyfills");
+const resolveTo = (target) => () => ({ path: target });
+const plugin = {
+  name: "loxmatter",
+  setup(build) {
+    // zigbee-herdsman's package entry pulls in the serial port and its native
+    // bindings; the library needs only its ZCL parts (design, section 4.2).
+    build.onResolve({ filter: /^zigbee-herdsman$/ }, resolveTo(path.join(polyfills, "herdsman.js")));
+    build.onResolve({ filter: /^(node:)?assert$/ }, resolveTo(path.join(polyfills, "assert.js")));
+    build.onResolve({ filter: /^(node:)?(crypto|fs|path|perf_hooks|util|os)$/ }, resolveTo(path.join(polyfills, "unavailable.js")));
+    build.onResolve({ filter: /^(node:)?events$/ }, resolveTo(path.join(polyfills, "events.js")));
+    build.onResolve({ filter: /^(node:)?buffer$/ }, () => ({ path: requireFrom.resolve("buffer/") }));
+    build.onResolve({ filter: /^string_decoder$/ }, () => ({ path: requireFrom.resolve("string_decoder/") }));
+  },
+};
+await esbuild.build({
+  entryPoints: [entryFile],
+  outfile: path.join(outDir, "engine.js"),
+  bundle: true,
+  platform: "neutral",
+  mainFields: ["main", "module"],
+  format: "iife",
+  target: "es2022",
+  minify: true,
+  legalComments: "none",
+  inject: [path.join(polyfills, "prelude.js")],
+  nodePaths: [path.join(herdsmanDir, "node_modules")],
+  plugins: [plugin],
+  logLevel: "warning",
+});
+fs.rmSync(entryFile);
+
+// 4. Licence and provenance.
+fs.writeFileSync(
+  path.join(outDir, "LICENSE"),
+  [
+    `zigbee-herdsman-converters ${version}`,
+    "",
+    fs.readFileSync(path.join(libraryDir, "LICENSE"), "utf8"),
+    "",
+    `zigbee-herdsman ${herdsmanVersion}`,
+    "",
+    fs.readFileSync(path.join(herdsmanLibDir, "LICENSE"), "utf8"),
+  ].join("\n"),
+);
+fs.writeFileSync(
+  path.join(outDir, "README.md"),
+  [
+    "# Generated from zigbee-herdsman-converters",
+    "",
+    `Built by \`scripts/herdsman/build.mjs\` from zigbee-herdsman-converters ${version}`,
+    `and zigbee-herdsman ${herdsmanVersion}, as pinned in \`herdsman/package-lock.json\`.`,
+    "Not kept in git; the Docker build and CI regenerate it.",
+    "",
+    "zigbee-herdsman-converters and zigbee-herdsman are under the MIT licence, whose",
+    "text is in `LICENSE` beside this file. The MIT licence is compatible with this",
+    "project's GPL-3.0; it does not extend to the library itself.",
+    "",
+  ].join("\n"),
+);
+
+const size = fs.statSync(path.join(outDir, "engine.js")).size;
+console.log(`engine.js: ${(size / 1e6).toFixed(1)} MB; ${added.length} new property numbers`);

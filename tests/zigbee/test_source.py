@@ -45,6 +45,7 @@ from fakes import (
     DeliveryError,
     FakeApplication,
     FakeApplicationFactory,
+    FakeAttributeDef,
     FakeCluster,
     FakeDevice,
     FakeEndpoint,
@@ -2904,3 +2905,61 @@ async def test_the_coordinator_is_recognised_while_the_application_is_still_star
     await _settle(harness.source)
 
     assert harness.source.pairing_rows() == []
+
+
+# --------------------------------------------- configuration values --
+
+
+async def test_a_configuration_value_is_queued_and_written_without_holding_the_call(
+    build, tmp_path: Path
+) -> None:
+    """Design 2026-11-08, section 5: `send` returns once the value is on
+    disk; the device's watcher writes it, and the row goes once the device
+    took it. Fault to prove it: write inline in `send` - a sleeping sensor
+    would then hold the request for the whole delivery timeout."""
+    from loxmatter.device_config import option_command_id
+
+    store = Store(tmp_path / "store.sqlite")
+    sensor = contact_sensor()
+    ias = sensor.endpoints[1].in_clusters[0x0500]
+    ias.attributes[0xF001] = FakeAttributeDef(0xF001, "keep_time")
+    harness = build(FakeApplication(devices=[sensor]), store=store)
+    await harness.source.connect()
+    call = DeviceCall(
+        technology="zigbee",
+        address=str(sensor.ieee),
+        endpoint=1,
+        cluster_id=0x0500,
+        command_id=option_command_id(0xF001),
+        payload={"value": 2},
+    )
+
+    await harness.source.send(call)
+    assert harness.source.pending_writes(str(sensor.ieee)) == {(1, 0x0500, 0xF001): 2}
+
+    for _ in range(50):
+        if not store.zigbee_pending.writes_for(str(sensor.ieee)):
+            break
+        await asyncio.sleep(0)
+    assert ias.writes == [{0xF001: 2}]
+    assert harness.source.pending_writes(str(sensor.ieee)) == {}
+    store.close()
+
+
+async def test_a_configuration_value_for_an_undeclared_attribute_is_refused(build) -> None:
+    from loxmatter.device_config import option_command_id
+
+    sensor = contact_sensor()
+    harness = build(FakeApplication(devices=[sensor]), store=None)
+    await harness.source.connect()
+    with pytest.raises(DeviceUnreachableError):
+        await harness.source.send(
+            DeviceCall(
+                technology="zigbee",
+                address=str(sensor.ieee),
+                endpoint=1,
+                cluster_id=0x0500,
+                command_id=option_command_id(0xF001),
+                payload={"value": 2},
+            )
+        )

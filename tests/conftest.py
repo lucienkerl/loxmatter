@@ -46,6 +46,24 @@ def isolate_loxmatter_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.fixture(autouse=True)
+def without_device_library(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Zigbee source a test builds would load the zigbee2mqtt device
+    library's catalogue and, for a fake device the library knows - an IKEA
+    bulb, say - start its JavaScript engine. A test about something else
+    must not depend on the library, so it is switched off here; the tests
+    about it (`tests/zigbee/test_herdsman_*.py`) hand their own catalogue
+    to the `Library` they build, which this does not touch."""
+    if "herdsman" in request.node.path.name:
+        return
+    from loxmatter.zigbee.herdsman import library
+
+    def disabled() -> library.Catalogue:
+        raise FileNotFoundError("the device library is switched off in this test")
+
+    monkeypatch.setattr(library, "shared_catalogue", disabled)
+
+
+@pytest.fixture(autouse=True)
 def reset_language() -> Iterator[None]:
     """Resets the global language setting before AND after every test.
 

@@ -1,0 +1,15 @@
+{
+  "name": "loxmatter-herdsman-build",
+  "private": true,
+  "description": "Build-time only: pins zigbee-herdsman-converters, from which scripts/herdsman/build.mjs generates the catalogue and the engine bundle. Nothing here runs inside loxmatter.",
+  "license": "GPL-3.0-or-later",
+  "dependencies": {
+    "zigbee-herdsman-converters": "26.128.0"
+  },
+  "devDependencies": {
+    "buffer": "6.0.3",
+    "esbuild": "0.25.12",
+    "events": "3.3.0",
+    "string_decoder": "1.3.0"
+  }
+}
