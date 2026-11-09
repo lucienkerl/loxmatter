@@ -8,6 +8,16 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-09
+
+### Before you update
+
+- **The database schema rises from 17 to 18.** The update backs the database
+  up before it starts, as every update does, and nothing needs doing by
+  hand. Lamps that are already in a group keep being exported as before. If
+  you ever need to go back to 0.6, restore the backup the update made rather
+  than running the old version on the new database.
+
 ### Added
 
 - **A clearer export screen.** Export now shows what goes to Loxone room by
