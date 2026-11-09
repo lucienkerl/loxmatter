@@ -83,6 +83,10 @@ people who don't know the code.
 
 ### Fixed
 
+- **Container logs no longer fill the memory card.** Each container now
+  keeps at most 30 MB of log output. Before, the Thread border router's log
+  kept growing until there was no room left and the Matter server could no
+  longer start.
 - **Button inputs are no longer skipped as conflicts.** Loxone Config leaves
   out a setting when it holds its default, and saved the button events
   (press, long press, ...) that way. Updating the Loxone project then listed
