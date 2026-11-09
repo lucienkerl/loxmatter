@@ -1,6 +1,6 @@
 [project]
 name = "loxmatter"
-version = "0.6.0"
+version = "0.7.0"
 description = "Matter bridge for the Loxone Miniserver: connects Thread, Wi-Fi, Ethernet and Zigbee devices to Loxone, self-hosted"
 readme = "README.md"
 license = "GPL-3.0-or-later"

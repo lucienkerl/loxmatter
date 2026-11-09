@@ -44,6 +44,17 @@
 # anyone running several instances side by side can keep using it.
 name: loxmatter-testhost
 
+# Docker's json-file driver keeps a container's output forever unless told
+# otherwise. On the test Pi the otbr log alone had grown to 244 MB when the
+# 14 GB SD card ran full and the Matter server could no longer start
+# (ENOSPC, 9 November 2026). Every service therefore keeps at most three
+# files of 10 MB each; `docker logs` still shows the most recent output.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   otbr:
     # The default is loxmatter's own pinned build (deploy/otbr/source.env,
@@ -56,6 +67,7 @@ services:
     # image while testing a different ot-br-posix commit. See .env.example.
     image: ${OTBR_IMAGE:-ghcr.io/lucienkerl/loxmatter-otbr:2ba12d24-rcp2}
     container_name: otbr
+    logging: *default-logging
     # Only with the "thread" profile active (2026-09-05). This service
     # passes through a real device via `devices:` below - if the radio
     # module is missing, `docker compose up` fails for the ENTIRE stack,
@@ -189,6 +201,7 @@ services:
     # the user pi misses the node file.
     image: ghcr.io/matter-js/matterjs-server:stable
     container_name: matter-server
+    logging: *default-logging
     network_mode: host
     restart: unless-stopped
     # CARRIED OVER UNCHANGED from the old image, and this is an open question,
@@ -292,6 +305,7 @@ services:
       context: ../..
       dockerfile: Dockerfile
     container_name: loxmatter
+    logging: *default-logging
     restart: unless-stopped
     # Like otbr/matter-server: network_mode host instead of an explicit
     # `ports:` list, for two reasons, not just consistency. First, `--url`
@@ -487,6 +501,7 @@ services:
   loxmatter-updater:
     image: ghcr.io/lucienkerl/loxmatter-updater:stable
     container_name: loxmatter-updater
+    logging: *default-logging
     restart: unless-stopped
     # So that `curl http://host.docker.internal:8080/health` reaches the
     # service on the host: from inside this container, 127.0.0.1 would be

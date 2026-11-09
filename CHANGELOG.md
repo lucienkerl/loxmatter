@@ -8,6 +8,16 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-09
+
+### Before you update
+
+- **The database schema rises from 17 to 18.** The update backs the database
+  up before it starts, as every update does, and nothing needs doing by
+  hand. Lamps that are already in a group keep being exported as before. If
+  you ever need to go back to 0.6, restore the backup the update made rather
+  than running the old version on the new database.
+
 ### Added
 
 - **A clearer export screen.** Export now shows what goes to Loxone room by
@@ -83,6 +93,10 @@ people who don't know the code.
 
 ### Fixed
 
+- **Container logs no longer fill the memory card.** Each container now
+  keeps at most 30 MB of log output. Before, the Thread border router's log
+  kept growing until there was no room left and the Matter server could no
+  longer start.
 - **Button inputs are no longer skipped as conflicts.** Loxone Config leaves
   out a setting when it holds its default, and saved the button events
   (press, long press, ...) that way. Updating the Loxone project then listed
