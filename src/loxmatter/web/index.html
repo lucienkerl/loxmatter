@@ -1917,6 +1917,14 @@
                           @click="closeTileMenu($el); openSignalsModal(device)"
                           x-text="t('web.devices.menu_signals')"
                         ></button>
+                        <!-- Configuration (design 2026-11-08): only for a
+                             device that brings a writable value along. -->
+                        <button
+                          class="tile-menu-item"
+                          x-show="device.config_options > 0"
+                          @click="closeTileMenu($el); openConfigModal(device)"
+                          x-text="t('web.devices.menu_config')"
+                        ></button>
                         <button
                           class="tile-menu-item"
                           @click="closeTileMenu($el); openExpertModal(device)"
@@ -4442,6 +4450,98 @@
                   <span class="k" x-text="t('web.devices.expert_ip_address')"></span><span>—</span>
                 </div>
               </section>
+            </div>
+          </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!-- Configuration dialog (design 2026-11-08, section 6): the values a
+         device brings along, such as a motion sensor's keep time. Same
+         open/close mechanics as the expert modal above; `@close` is the one
+         place that resets its state (`onConfigModalClosed`). A value set
+         for a sleeping battery device shows as waiting until the device
+         takes it - `loadConfig` asks again every 5 s meanwhile. -->
+    <dialog
+      x-ref="configModal"
+      class="expert-modal config-modal"
+      aria-labelledby="config-modal-heading"
+      @close="onConfigModalClosed()"
+      @mousedown="configModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (configModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); configModalBackdropMousedown = false"
+    >
+      <template x-if="configModalDeviceObject()">
+        <div class="expert-modal-body">
+          <div class="expert-modal-head">
+            <h2
+              id="config-modal-heading"
+              x-text="t('web.config.heading', { device: configModalDeviceObject().label })"
+            ></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              class="expert-modal-close"
+              :title="t('web.signals.modal_close')"
+              :aria-label="t('web.signals.modal_close')"
+              @click="closeConfigModal()"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+          <p class="hint" x-show="!configData && !configError" x-text="t('web.config.loading')"></p>
+          <p class="banner danger" x-show="configError" x-cloak x-text="configError"></p>
+          <template x-if="configData">
+            <div>
+              <p class="hint" x-text="t('web.config.intro')"></p>
+              <template x-for="option in configData.options" :key="option.key">
+                <section class="config-option">
+                  <div class="config-option-head">
+                    <label class="config-option-title" :for="'config-' + option.key" x-text="option.title"></label>
+                    <span class="config-option-state" x-show="option.pending !== null" x-cloak>
+                      <span class="status-pill warn" x-text="t('web.config.pending', { value: configValueText(option, option.pending) })"></span>
+                    </span>
+                    <span class="config-option-state hint" x-show="option.pending === null"
+                          x-text="t('web.config.current', { value: configValueText(option, option.value) })"></span>
+                  </div>
+                  <div class="config-option-control">
+                    <template x-if="option.kind === 'enum'">
+                      <select :id="'config-' + option.key" :disabled="configBusy[option.key]"
+                              @change="setConfigValue(option, $event.target.value)">
+                        <option value="" disabled :selected="configShownValue(option) === null"
+                                x-text="t('web.config.choose')"></option>
+                        <template x-for="choice in option.choices" :key="choice.value">
+                          <option :value="choice.value" :selected="configShownValue(option) === choice.value"
+                                  x-text="choice.label"></option>
+                        </template>
+                      </select>
+                    </template>
+                    <template x-if="option.kind === 'switch'">
+                      <label class="config-switch">
+                        <input type="checkbox" :id="'config-' + option.key" :disabled="configBusy[option.key]"
+                               :checked="configShownValue(option) === 1"
+                               @change="setConfigValue(option, $event.target.checked ? 1 : 0)" />
+                        <span x-text="configShownValue(option) === 1 ? t('web.config.on') : t('web.config.off')"></span>
+                      </label>
+                    </template>
+                    <template x-if="option.kind === 'number'">
+                      <div class="config-number">
+                        <input type="number" :id="'config-' + option.key" :disabled="configBusy[option.key]"
+                               :min="option.minimum ?? ''" :max="option.maximum ?? ''" :step="option.step ?? 'any'"
+                               :value="configDrafts[option.key] ?? configShownValue(option) ?? ''"
+                               @input="configDrafts[option.key] = $event.target.value"
+                               @keydown.enter="setConfigValue(option, configDrafts[option.key])" />
+                        <span class="hint" x-show="option.unit" x-text="option.unit"></span>
+                        <button :disabled="configBusy[option.key] || configDrafts[option.key] === undefined"
+                                @click="setConfigValue(option, configDrafts[option.key])"
+                                x-text="t('web.config.apply')"></button>
+                      </div>
+                    </template>
+                  </div>
+                  <p class="hint config-option-range" x-show="option.kind === 'number' && option.minimum !== null && option.maximum !== null"
+                     x-text="t('web.config.range', { min: option.minimum, max: option.maximum })"></p>
+                  <label class="config-export">
+                    <input type="checkbox" :checked="option.exported" @change="toggleConfigExported(option)" />
+                    <span x-text="t('web.config.export')"></span>
+                  </label>
+                </section>
+              </template>
             </div>
           </template>
         </div>

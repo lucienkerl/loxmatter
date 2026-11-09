@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, Literal, cast, get_args
 
+from loxmatter.device_config import ConfigOption
+
 # BasicInformation cluster on endpoint 0.
 _VENDOR_NAME_PATH = "0/40/1"
 _PRODUCT_NAME_PATH = "0/40/3"
@@ -107,6 +109,10 @@ class NodeSnapshot:
     # be falsely treated as unreachable (review fix C1, 2026-09-02 - see
     # `BridgeMatterClient.snapshots` and `Runtime.seed_from_snapshot`).
     available: bool = True
+    # The device's writable configuration values (design 2026-11-08). Only
+    # the Zigbee source describes any so far: Matter has no catalogue of
+    # writable attributes this bridge can load (see `api/control.py`).
+    config_options: tuple[ConfigOption, ...] = ()
 
     @classmethod
     def from_raw(cls, node_id: int, raw: Mapping[str, Any]) -> NodeSnapshot:

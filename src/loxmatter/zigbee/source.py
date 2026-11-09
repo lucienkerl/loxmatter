@@ -76,6 +76,7 @@ import contextlib
 import errno
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -84,6 +85,7 @@ from types import ModuleType
 from typing import Any, Final, Literal
 
 from loxmatter import i18n
+from loxmatter.device_config import attribute_of_command, is_option_command
 from loxmatter.matter.models import NodeSnapshot, Technology
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.radios.inventory import under_host_dev
@@ -93,6 +95,7 @@ from loxmatter.sources import (
     IdentifyUnsupportedError,
     ReportingClosedError,
     RuntimeEventHandler,
+    SourceNotConfiguredError,
 )
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
@@ -103,6 +106,7 @@ from loxmatter.zigbee.configure import (
     PollingSchedule,
     configure_device,
     install_command_handlers,
+    request_retry,
     watch_for_wakeups,
 )
 from loxmatter.zigbee.migration import (
@@ -112,6 +116,7 @@ from loxmatter.zigbee.migration import (
     network_identity,
     restore_backup,
 )
+from loxmatter.zigbee.options import config_options, missing_values, read_missing
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import (
     TRADFRI_MOTION_SENSOR_MODEL,
@@ -1402,6 +1407,7 @@ class ZigbeeSource:
             endpoints=tuple(
                 self._endpoint_facts(endpoint) for endpoint in device.non_zdo_endpoints
             ),
+            config_options=config_options(device),
         )
 
     async def _snapshot(self, device: Any) -> NodeSnapshot:
@@ -1522,6 +1528,12 @@ class ZigbeeSource:
         for address in self._store.zigbee_pending.addresses_with_pending():
             device = self._device_or_none(address)
             if device is not None:
+                watch_for_wakeups(device, store=self._store, polling=self._polling)
+        # A device whose configuration value the bridge has never seen gets
+        # the same watcher: its next wake-up is when the value can be read
+        # (design 2026-11-08, section 5).
+        for device in self._devices():
+            if missing_values(device):
                 watch_for_wakeups(device, store=self._store, polling=self._polling)
 
     async def _seed_baseline(self) -> None:
@@ -1755,6 +1767,9 @@ class ZigbeeSource:
         `move_to_level_with_on_off` carries no options fields at all, and
         offering them would make zigpy reject the whole command."""
         device = self._require_device(call.address)
+        if is_option_command(call.cluster_id, call.command_id):
+            self._queue_option_write(device, call)
+            return
         endpoint = device.endpoints.get(call.endpoint)
         cluster = None if endpoint is None else endpoint.in_clusters.get(call.cluster_id)
         command = None if cluster is None else cluster.server_commands.get(call.command_id)
@@ -1789,6 +1804,47 @@ class ZigbeeSource:
                     ),
                 )
             )
+
+    def _queue_option_write(self, device: Any, call: DeviceCall) -> None:
+        """Queues a configuration value and returns (design 2026-11-08,
+        section 5). The row is written first, so a value set while the
+        device sleeps - or while the bridge restarts - is still written when
+        the device is next heard; the watcher is asked for a pass at once,
+        which is all a listening, mains-powered device needs."""
+        attribute_id = attribute_of_command(call.command_id)
+        endpoint = device.endpoints.get(call.endpoint)
+        cluster = None if endpoint is None else endpoint.in_clusters.get(call.cluster_id)
+        if cluster is None or attribute_id not in cluster.attributes:
+            raise DeviceUnreachableError(
+                i18n.t(
+                    "api.errors.device_unreachable",
+                    exc=i18n.t(
+                        "api.errors.zigbee_no_such_attribute",
+                        endpoint=call.endpoint,
+                        address=call.address,
+                        attribute_id=attribute_id,
+                        cluster_id=call.cluster_id,
+                    ),
+                )
+            )
+        store = self._store
+        if store is None:
+            raise SourceNotConfiguredError(self.technology)
+        store.zigbee_pending.queue_write(
+            call.address, call.endpoint, call.cluster_id, attribute_id, call.payload["value"]
+        )
+        watch_for_wakeups(device, store=store, polling=self._polling)
+        request_retry(device)
+
+    def pending_writes(self, address: str) -> dict[tuple[int, int, int], object]:
+        """`(endpoint, cluster, attribute) -> raw value` still owed to the
+        device, for the web UI's "waiting for the device"."""
+        if self._store is None:
+            return {}
+        return {
+            (write.endpoint, write.cluster_id, write.attribute_id): write.value
+            for write in self._store.zigbee_pending.writes_for(address)
+        }
 
     async def remove(self, address: str) -> None:
         """Asks the device to leave, and forgets it either way.
@@ -1992,6 +2048,9 @@ class ZigbeeSource:
         self._configuring.add(address)
         try:
             await configure_device(device, store=self._store, polling=self._polling)
+            # Awake right now, so the moment to learn its configuration
+            # values (design 2026-11-08, section 5).
+            await read_missing(device, now=time.time())
         except Exception:
             logger.exception("configuring %s after it joined failed", address)
         finally:

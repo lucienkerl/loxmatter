@@ -70,6 +70,7 @@ from loxmatter.commands.color import (
     rgb_to_cie_xy,
     rgb_to_hue_saturation,
 )
+from loxmatter.device_config import OptionValueError, to_raw
 from loxmatter.model.store import StoredCommand
 from loxmatter.sources import DeviceCall
 
@@ -403,6 +404,46 @@ _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], _Built]] = {
 }
 
 
+def option_call(command: StoredCommand, value: str) -> DeviceCall:
+    """The write of one configuration value (design 2026-11-08, section 4).
+
+    The value is checked against the option the row stores and converted
+    to the device's raw value HERE, before anything is queued: `/cmd`
+    answers a value the option cannot take with 400, as it does for any
+    other command. The call keeps the row's negative command ID - that is
+    what tells a source it is a write (`device_config.is_option_command`) -
+    and carries the raw value as its whole payload."""
+    option = command.option
+    assert option is not None
+    try:
+        raw = to_raw(option, value)
+    except OptionValueError as exc:
+        allowed = (
+            ", ".join(_format(option.choice_value(c)) for c in option.choices)
+            if option.kind == "enum"
+            else "0, 1"
+            if option.kind == "switch"
+            else f"{_format(option.minimum)} … {_format(option.maximum)}"
+        )
+        raise UnsupportedValueError(
+            i18n.t("api.errors.option_value_invalid", value=value, allowed=allowed)
+        ) from exc
+    return DeviceCall(
+        technology=command.technology,
+        address=command.address,
+        endpoint=command.endpoint,
+        cluster_id=command.cluster_id,
+        command_id=command.command_id,
+        payload={"value": raw},
+    )
+
+
+def _format(number: float | None) -> str:
+    if number is None:
+        return "?"
+    return str(int(number)) if float(number).is_integer() else str(number)
+
+
 def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
     """The device calls for an exported command key.
 
@@ -438,6 +479,8 @@ def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
     second call, and that shows up as 502 instead of silently failing.
     """
 
+    if command.option is not None:
+        return [option_call(command, value)]
     build_payload = _PAYLOAD_BUILDERS.get((command.cluster_id, command.command_id))
     if build_payload is None:
         raise UnsupportedValueError(

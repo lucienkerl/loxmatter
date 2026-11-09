@@ -362,6 +362,9 @@ api.errors.unknown_command:
 api.errors.value_not_a_number:
   en: "value {value!r} is not a number"
   de: "Wert {value!r} ist keine Zahl"
+api.errors.option_value_invalid:
+  en: "value {value!r} is not allowed here - possible: {allowed}"
+  de: "Wert {value!r} ist hier nicht erlaubt - möglich: {allowed}"
 api.errors.kelvin_not_positive:
   en: "colour temperature {value!r} must be above 0 Kelvin"
   de: "Farbtemperatur {value!r} muss über 0 Kelvin liegen"
@@ -445,6 +448,9 @@ api.errors.zigbee_device_not_in_network:
 api.errors.zigbee_no_such_command:
   en: "endpoint {endpoint} of {address} has no command {command_id} on cluster {cluster_id}"
   de: "Endpunkt {endpoint} von {address} hat keinen Befehl {command_id} im Cluster {cluster_id}"
+api.errors.zigbee_no_such_attribute:
+  en: "endpoint {endpoint} of {address} has no attribute {attribute_id} on cluster {cluster_id}"
+  de: "Endpunkt {endpoint} von {address} hat kein Attribut {attribute_id} im Cluster {cluster_id}"
 api.errors.zigbee_command_refused:
   en: "the device answered command {command_id} with status {status}"
   de: "das Gerät hat Befehl {command_id} mit Status {status} beantwortet"
@@ -2083,6 +2089,9 @@ web.devices.menu_signals:
 web.devices.menu_expert:
   en: "Expert settings…"
   de: "Experteneinstellungen…"
+web.devices.menu_config:
+  en: "Configuration…"
+  de: "Konfiguration…"
 web.devices.menu_firmware:
   en: "Software update…"
   de: "Software-Update…"
@@ -4587,3 +4596,142 @@ api.errors.projectsync_bad_decisions:
 web.export.overview_heading:
   en: "What goes to Loxone, by room"
   de: "Was nach Loxone geht, nach Räumen"
+
+# Device configuration (design 2026-11-08). `web.config.*` is the dialog;
+# `config.option.*` names a configuration value by the key its source gives
+# it (a zha-quirks `translation_key`, else the attribute name) - a value with
+# no entry here shows the source's own English name. `config.choice.*`
+# names an enum value by its member name, lower case; `config.unit.*` is
+# what a choice like `_30_seconds` reads as.
+web.config.heading:
+  en: "Configuration — {device}"
+  de: "Konfiguration — {device}"
+web.config.loading:
+  en: "Loading…"
+  de: "Wird geladen…"
+web.config.intro:
+  en: "Values the device brings along. A battery device takes a new value the next time it wakes up - a motion sensor at its next detection."
+  de: "Werte, die das Gerät mitbringt. Ein batteriebetriebenes Gerät übernimmt einen neuen Wert, sobald es das nächste Mal aufwacht - ein Bewegungsmelder bei der nächsten Erkennung."
+web.config.current:
+  en: "Currently: {value}"
+  de: "Aktuell: {value}"
+web.config.pending:
+  en: "Waiting for the device: {value}"
+  de: "Wartet auf das Gerät: {value}"
+web.config.value_unknown:
+  en: "not reported yet"
+  de: "noch nicht gemeldet"
+web.config.choose:
+  en: "Choose…"
+  de: "Auswählen…"
+web.config.apply:
+  en: "Set"
+  de: "Setzen"
+web.config.on:
+  en: "On"
+  de: "Ein"
+web.config.off:
+  en: "Off"
+  de: "Aus"
+web.config.range:
+  en: "Allowed: {min} to {max}"
+  de: "Erlaubt: {min} bis {max}"
+web.config.export:
+  en: "Export to Loxone (output to set it, input to report it)"
+  de: "An Loxone exportieren (Ausgang zum Setzen, Eingang für den aktuellen Wert)"
+web.config.load_error:
+  en: "Could not load the configuration: {message}"
+  de: "Konfiguration konnte nicht geladen werden: {message}"
+web.config.set_error:
+  en: "Could not set {title}: {message}"
+  de: "{title} konnte nicht gesetzt werden: {message}"
+web.config.export_error:
+  en: "Could not change the export: {message}"
+  de: "Export konnte nicht geändert werden: {message}"
+config.unit.seconds:
+  en: "s"
+  de: "s"
+config.unit.minutes:
+  en: "min"
+  de: "min"
+config.unit.hours:
+  en: "h"
+  de: "h"
+config.option.keep_time:
+  en: "Keep time"
+  de: "Haltezeit"
+config.option.sensitivity:
+  en: "Sensitivity"
+  de: "Empfindlichkeit"
+config.option.fading_time:
+  en: "Fading time"
+  de: "Abfallzeit"
+config.option.presence_sensitivity:
+  en: "Presence sensitivity"
+  de: "Präsenzempfindlichkeit"
+config.option.motion_sensitivity:
+  en: "Motion sensitivity"
+  de: "Bewegungsempfindlichkeit"
+config.option.motion_detection_sensitivity:
+  en: "Motion detection sensitivity"
+  de: "Empfindlichkeit der Bewegungserkennung"
+config.option.static_detection_sensitivity:
+  en: "Static detection sensitivity"
+  de: "Empfindlichkeit der Präsenzerkennung"
+config.option.motion_detection_mode:
+  en: "Motion detection mode"
+  de: "Erkennungsmodus"
+config.option.detection_delay:
+  en: "Detection delay"
+  de: "Erkennungsverzögerung"
+config.option.detection_distance_min:
+  en: "Minimum detection distance"
+  de: "Minimale Erkennungsdistanz"
+config.option.detection_distance_max:
+  en: "Maximum detection distance"
+  de: "Maximale Erkennungsdistanz"
+config.option.illuminance_interval:
+  en: "Illuminance interval"
+  de: "Helligkeitsintervall"
+config.option.led_indicator:
+  en: "LED indicator"
+  de: "LED-Anzeige"
+config.option.child_lock:
+  en: "Child lock"
+  de: "Kindersicherung"
+config.option.power_on_state:
+  en: "State after power loss"
+  de: "Zustand nach Stromausfall"
+config.option.temperature_offset:
+  en: "Temperature offset"
+  de: "Temperaturkorrektur"
+config.option.humidity_offset:
+  en: "Humidity offset"
+  de: "Feuchtigkeitskorrektur"
+config.option.local_temperature_calibration:
+  en: "Temperature calibration"
+  de: "Temperaturkalibrierung"
+config.option.window_detection:
+  en: "Window detection"
+  de: "Fenstererkennung"
+config.option.frost_protection:
+  en: "Frost protection"
+  de: "Frostschutz"
+config.option.display_brightness:
+  en: "Display brightness"
+  de: "Displayhelligkeit"
+config.choice.low:
+  en: "Low"
+  de: "Niedrig"
+config.choice.medium:
+  en: "Medium"
+  de: "Mittel"
+config.choice.high:
+  en: "High"
+  de: "Hoch"
+config.choice.off:
+  en: "Off"
+  de: "Aus"
+config.choice.on:
+  en: "On"
+  de: "Ein"

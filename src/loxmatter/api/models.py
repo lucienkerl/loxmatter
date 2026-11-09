@@ -123,6 +123,9 @@ class DeviceOut(BaseModel):
     # Whether the device can blink on request (Identify cluster present);
     # design 2026-10-02, section 9.1.
     identify: bool = False
+    # How many configuration values the device brings (design 2026-11-08):
+    # the tile offers "Configuration…" only when there is one.
+    config_options: int = 0
     # A removal of this device is under way (`DELETE /api/devices/{id}`
     # answered 202), or the latest one failed with `removal_error`. Kept by
     # the bridge, not the page, so a reload or a second tab shows the same
@@ -172,6 +175,45 @@ class DeviceExpertOut(BaseModel):
     matter_version: str | None = None
     serial: str | None
     endpoints: list[EndpointClustersOut]
+
+
+class ConfigChoiceOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    # On the option's one scale (`device_config`): what Loxone sends.
+    value: float
+    label: str
+
+
+class ConfigOptionOut(BaseModel):
+    """One configuration value of a device (design 2026-11-08, section 6).
+    `key` is its command key: `POST /api/commands/{key}` sets it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    name: str
+    title: str
+    kind: str
+    unit: str
+    minimum: float | None
+    maximum: float | None
+    step: float | None
+    choices: list[ConfigChoiceOut]
+    # What the device last reported; `None` before it ever did.
+    value: float | None
+    # A value set but not yet taken by the device - a sleeping battery
+    # device takes it when it is next heard.
+    pending: float | None
+    exported: bool
+    # The key of the signal carrying `value`, for the Loxone input.
+    signal_key: str | None
+
+
+class ConfigOptionsOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    options: list[ConfigOptionOut]
 
 
 class SignalPatch(BaseModel):

@@ -366,7 +366,7 @@ def test_how_many_shipped_quirks_carry_a_duplicate_attribute_id() -> None:
 
     `zhaquirks.setup()` IS called here - it is the only way the registry
     holds every quirk module - which is what makes this the slowest test in
-    the file (2-3 s). It is the one place in the suite that pays it."""
+    the file (2-3 s). `test_options.py` is the only other place that pays it."""
     import zhaquirks
     from zigpy.zcl import Cluster
 

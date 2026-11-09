@@ -76,6 +76,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from loxmatter.zigbee.options import read_missing, write_pending
 from loxmatter.zigbee.translate import TRADFRI_MOTION_SENSOR_MODEL
 
 logger = logging.getLogger(__name__)
@@ -999,6 +1000,7 @@ class _WakeUpWatcher:
         self._now = now
         self._polling = polling
         self._task: asyncio.Task[ConfigureOutcome] | None = None
+        self._again = False
 
     def device_last_seen_updated(self, last_seen: float) -> None:
         self._retry()
@@ -1006,6 +1008,16 @@ class _WakeUpWatcher:
     def cluster_command(self, tsn: int, command_id: int, args: Any) -> None:
         if command_id == POLL_CONTROL_CHECKIN_COMMAND:
             self._retry()
+
+    def _retry_now(self) -> None:
+        """Runs a pass even while one is under way: that one may have read
+        the pending tables before the row that asks for this pass was
+        written (a configuration value set just now), so a second pass
+        follows it instead of being skipped."""
+        if self._task is not None and not self._task.done():
+            self._again = True
+            return
+        self._retry()
 
     def _retry(self) -> None:
         if self._task is not None and not self._task.done():
@@ -1016,6 +1028,27 @@ class _WakeUpWatcher:
             )
         except RuntimeError:  # pragma: no cover - no running loop
             self._task = None
+            return
+        self._task.add_done_callback(self._after)
+
+    def _after(self, task: asyncio.Task[ConfigureOutcome]) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning(
+                "retrying the pending work of %s failed: %s",
+                self._device.ieee,
+                _describe(task.exception()),
+            )
+        if self._again:
+            self._again = False
+            self._retry()
+
+
+def request_retry(device: Any) -> None:
+    """Asks the device's watcher for a pass now - for a mains-powered
+    device that is listening, the only one it gets."""
+    watcher = getattr(device, _WATCHER_ATTRIBUTE, None)
+    if watcher is not None:
+        watcher._retry_now()
 
 
 def watch_for_wakeups(
@@ -1065,6 +1098,10 @@ async def retry_pending(
             device, endpoint, cluster, cluster_id, store=store, now=now, polling=polling
         )
         (configured if done else deferred).append(cluster_id)
+    # Configuration values (design 2026-11-08, section 5): set ones still
+    # owed, then the current value of any the bridge has never seen.
+    if await write_pending(device, store):
+        await read_missing(device, now=now())
     return ConfigureOutcome(
         configured=tuple(configured),
         deferred=tuple(deferred),

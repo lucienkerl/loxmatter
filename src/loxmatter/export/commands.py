@@ -37,13 +37,16 @@ actually do.
 One row breaks that rule on purpose: `lumitech` (design 2026-09-24). It
 names no Matter command and comes from no AcceptedCommandList - it is the
 lighting controller output, appended once per light endpoint that already
-carries a real light command, in both normal and raw mode alike.
+carries a real light command, in both normal and raw mode alike. A
+configuration value's write is the other (design 2026-11-08): it comes from
+`NodeSnapshot.config_options`, not from a command list.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from loxmatter.device_config import ConfigOption
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID, parse_attribute_path
 from loxmatter.profiles.capabilities import command_needs_missing_feature
@@ -64,6 +67,9 @@ class DeviceCommand:
     command_id: int
     slug: str
     takes_value: bool
+    # Set for a configuration value's write (design 2026-11-08): the row
+    # stores it, so a value can be checked against it before it is queued.
+    option: ConfigOption | None = field(default=None, compare=False)
 
 
 def extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[DeviceCommand]:
@@ -120,6 +126,21 @@ def extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[Devic
                 command_id=LUMITECH[1],
                 slug=LUMITECH_SLUG,
                 takes_value=True,
+            )
+        )
+
+    # One output per configuration value (design 2026-11-08, section 4):
+    # writing it is what Loxone does to it. Its command ID is negative and
+    # names the attribute - see `device_config.option_command_id`.
+    for option in snapshot.config_options:
+        commands.append(
+            DeviceCommand(
+                endpoint=option.endpoint,
+                cluster_id=option.cluster_id,
+                command_id=option.command_id,
+                slug=option.command_slug,
+                takes_value=True,
+                option=option,
             )
         )
 

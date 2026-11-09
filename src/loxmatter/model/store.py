@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loxmatter import i18n
+from loxmatter.device_config import ConfigOption, is_option_command
 from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import (
@@ -84,6 +85,7 @@ from loxmatter.profiles.relevance import (
 )
 from loxmatter.profiles.table import (
     Exportability,
+    Profile,
     element_rank_for,
     feedback_elements,
     is_exportable,
@@ -190,7 +192,11 @@ DEFAULT_LISTEN_PORT = 8080
 # nullable column `device.group_export`, see `_migrate_to_v18`. Additive; it
 # writes `full` for every device that is a group member at that moment, so an
 # existing installation keeps exporting what it exported before.
-_SCHEMA_VERSION = 18
+# Version 19 (device configuration, design 2026-11-08) adds the nullable
+# column `command.option` and the table `zigbee_pending_write`, see
+# `_migrate_to_v19`. Additive. A rolled-back image lists an option's row as
+# an output whose `/cmd` answers 400 - it has no payload builder for it.
+_SCHEMA_VERSION = 19
 
 
 def schema_version() -> int:
@@ -254,6 +260,7 @@ CREATE TABLE IF NOT EXISTS command (
     slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
     exported    INTEGER,
+    option      TEXT,
     UNIQUE (device_id, endpoint, cluster_id, command_id)
 );
 CREATE TABLE IF NOT EXISTS setting (
@@ -294,6 +301,14 @@ CREATE TABLE IF NOT EXISTS zigbee_pending_config (
     endpoint   INTEGER NOT NULL,
     cluster_id INTEGER NOT NULL,
     PRIMARY KEY (address, endpoint, cluster_id)
+);
+CREATE TABLE IF NOT EXISTS zigbee_pending_write (
+    address      TEXT NOT NULL,
+    endpoint     INTEGER NOT NULL,
+    cluster_id   INTEGER NOT NULL,
+    attribute_id INTEGER NOT NULL,
+    value        TEXT NOT NULL,
+    PRIMARY KEY (address, endpoint, cluster_id, attribute_id)
 );
 CREATE TABLE IF NOT EXISTS firmware_status (
     device_id            INTEGER PRIMARY KEY REFERENCES device(id),
@@ -1055,6 +1070,14 @@ def _migrate_to_v18(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v19(db: sqlite3.Connection) -> None:
+    """Adds `command.option` and `zigbee_pending_write` (device
+    configuration, design 2026-11-08, section 5). The table comes from
+    `_SCHEMA`; the column needs the ALTER. No backfill: `backfill_commands`
+    registers every device's options on the next start."""
+    _add_column_if_missing(db, "command", "option", "TEXT")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -1077,6 +1100,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     16: _migrate_to_v16,
     17: _migrate_to_v17,
     18: _migrate_to_v18,
+    19: _migrate_to_v19,
 }
 
 
@@ -1225,6 +1249,9 @@ class StoredCommand:
     # the rule alone and never the user's; the web UI sorts by it.
     exported: bool = True
     functional: bool = True
+    # The configuration value this row writes, or None for a real command
+    # (design 2026-11-08, section 4).
+    option: ConfigOption | None = None
 
 
 @dataclass(frozen=True)
@@ -1272,7 +1299,9 @@ def _resolved_flags(
     """`(exported, functional)` for one command row (design 2026-09-24,
     4.2): `functional` is the default rule, `exported` the user's choice
     where there is one and the rule otherwise."""
-    functional = not is_expert_light_command(pair, has_lumitech)
+    # A configuration value is set once, not operated: its output is
+    # offered, never preselected (design 2026-11-08, section 4).
+    functional = not is_expert_light_command(pair, has_lumitech) and not is_option_command(*pair)
     exported = functional if explicit is None else bool(explicit)
     return exported, functional
 
@@ -2190,6 +2219,9 @@ class Store:
                 for pair, sample in member.items():
                     if pair in LIGHT_COMMAND_PAIRS and pair not in shared:
                         shared[pair] = sample
+            # A configuration value is a device's own, not a group's: the
+            # group row would carry no option to check a value against.
+            shared = {pair: c for pair, c in shared.items() if not is_option_command(*pair)}
 
         keep = set(shared)
         changed = False
@@ -2732,9 +2764,21 @@ class Store:
         """
         taken = self._existing_keys(device_id)
         device_types = device_types_by_endpoint(snapshot)
+        options = {option.path: option for option in snapshot.config_options}
         try:
             for ref in extract_signals(snapshot):
                 profile = lookup(ref, snapshot.attributes.get(ref.path))
+                option = options.get(ref.path) if ref.kind is SignalKind.ATTRIBUTE else None
+                if option is not None:
+                    # A configuration value's reading (design 2026-11-08,
+                    # section 4): named by the option, as its output is,
+                    # and never preselected - like its output.
+                    profile = Profile(
+                        slug=option.name,
+                        title=option.name,
+                        unit=option.unit,
+                        exportability=profile.exportability,
+                    )
                 existing = self._db.execute(
                     "SELECT key FROM signal WHERE device_id = ? AND endpoint = ? AND cluster_id = ?"
                     " AND element_id = ? AND kind = ?",
@@ -2753,7 +2797,7 @@ class Store:
                         (
                             profile.unit,
                             profile.exportability.value,
-                            int(is_functional(ref, device_types)),
+                            int(option is None and is_functional(ref, device_types)),
                             existing["key"],
                         ),
                     )
@@ -2772,7 +2816,7 @@ class Store:
                 # on the value belongs to the user. `functional`, on the
                 # other hand, never belongs to the user (see above) and is
                 # therefore written in BOTH branches.
-                functional = is_functional(ref, device_types)
+                functional = option is None and is_functional(ref, device_types)
                 # Third question (design 2026-09-24): whether the value is
                 # only feedback of a command - then Loxone sent it itself,
                 # and it stays unticked. `functional` stays true, so the
@@ -2993,10 +3037,13 @@ class Store:
                     " AND cluster_id = ? AND command_id = ?",
                     (device_id, command.endpoint, command.cluster_id, command.command_id),
                 ).fetchone()
+                option = None if command.option is None else command.option.to_json()
                 if existing is not None:
+                    # The option is re-adopted like the slug: a zha-quirks
+                    # update that widens a range reaches the stored row.
                     self._db.execute(
-                        "UPDATE command SET takes_value = ?, slug = ? WHERE key = ?",
-                        (int(command.takes_value), command.slug, existing["key"]),
+                        "UPDATE command SET takes_value = ?, slug = ?, option = ? WHERE key = ?",
+                        (int(command.takes_value), command.slug, option, existing["key"]),
                     )
                     continue
 
@@ -3022,8 +3069,8 @@ class Store:
                 self._db.execute(
                     "INSERT INTO command "
                     "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
-                    " takes_value)"
-                    " VALUES (?, (SELECT node_id FROM device WHERE id = ?), ?, ?, ?, ?, ?, ?)",
+                    " takes_value, option)"
+                    " VALUES (?, (SELECT node_id FROM device WHERE id = ?), ?, ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
                         device_id,
@@ -3033,6 +3080,7 @@ class Store:
                         key,
                         command.slug,
                         int(command.takes_value),
+                        option,
                     ),
                 )
             # Like at the end of `register_signals`: even
@@ -3105,4 +3153,5 @@ class Store:
             device_id=int(row["device_id"]),
             exported=exported,
             functional=functional,
+            option=ConfigOption.from_json(row["option"]) if row["option"] else None,
         )

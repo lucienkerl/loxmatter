@@ -41,7 +41,21 @@ trace at all, and the device would never be retried.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PendingWrite:
+    """A configuration value the device has not taken yet. `value` is the
+    device's RAW value (`device_config.to_raw`), so the retry needs nothing
+    but this row."""
+
+    endpoint: int
+    cluster_id: int
+    attribute_id: int
+    value: int | float | bool
 
 
 class ZigbeePendingStore:
@@ -87,13 +101,68 @@ class ZigbeePendingStore:
 
     def addresses_with_pending(self) -> list[str]:
         """Every device with unfinished business, for a bridge that has just
-        started and wants to know which devices to watch for."""
+        started and wants to know which devices to watch for - a cluster
+        still to configure, or a configuration value still to write."""
         return [
             str(row["address"])
             for row in self._db.execute(
-                "SELECT DISTINCT address FROM zigbee_pending_config ORDER BY address"
+                "SELECT address FROM zigbee_pending_config"
+                " UNION SELECT address FROM zigbee_pending_write ORDER BY address"
             )
         ]
+
+    # --------------------------------------------- configuration values --
+    #
+    # A value written to a sleeping device waits here until the device is
+    # next heard (design 2026-11-08, section 5). Same rule as a cluster
+    # row: written BEFORE the attempt, deleted only after the device took
+    # it. One row per attribute - a second value set before the first one
+    # arrived replaces it, because only the newest one is still wanted.
+
+    def queue_write(
+        self, address: str, endpoint: int, cluster_id: int, attribute_id: int, value: object
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO zigbee_pending_write"
+            " (address, endpoint, cluster_id, attribute_id, value) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(address, endpoint, cluster_id, attribute_id)"
+            " DO UPDATE SET value = excluded.value",
+            (address, int(endpoint), int(cluster_id), int(attribute_id), json.dumps(value)),
+        )
+        self._db.commit()
+
+    def writes_for(self, address: str) -> list[PendingWrite]:
+        return [
+            PendingWrite(
+                endpoint=int(row["endpoint"]),
+                cluster_id=int(row["cluster_id"]),
+                attribute_id=int(row["attribute_id"]),
+                value=json.loads(row["value"]),
+            )
+            for row in self._db.execute(
+                "SELECT endpoint, cluster_id, attribute_id, value FROM zigbee_pending_write"
+                " WHERE address = ? ORDER BY endpoint, cluster_id, attribute_id",
+                (address,),
+            )
+        ]
+
+    def clear_write(self, address: str, write: PendingWrite) -> bool:
+        """Forgets one write - but only if its value is still the one that
+        was sent. A newer value queued while the older one was on its way
+        must stay, or it would be dropped unsent. Answers whether it went."""
+        cursor = self._db.execute(
+            "DELETE FROM zigbee_pending_write WHERE address = ? AND endpoint = ?"
+            " AND cluster_id = ? AND attribute_id = ? AND value = ?",
+            (
+                address,
+                write.endpoint,
+                write.cluster_id,
+                write.attribute_id,
+                json.dumps(write.value),
+            ),
+        )
+        self._db.commit()
+        return cursor.rowcount > 0
 
     def forget(self, address: str) -> None:
         """Drops every row of one device.
@@ -102,4 +171,5 @@ class ZigbeePendingStore:
         must not make the new pairing inherit the old one's unfinished
         clusters, which belong to bindings the device no longer has."""
         self._db.execute("DELETE FROM zigbee_pending_config WHERE address = ?", (address,))
+        self._db.execute("DELETE FROM zigbee_pending_write WHERE address = ?", (address,))
         self._db.commit()
