@@ -1104,14 +1104,17 @@ async def test_the_age_is_a_tooltip_and_the_change_is_a_highlight(api):
     width every second - that shifted the row back and forth and drew the
     eye to the movement instead of the change (2026-09-03).
 
-    Now the cell's `title` carries it, and the change shows a highlight
-    that then fades again. This proves that both are delivered - NOT that
-    they look that way in the browser: no engine that applies CSS or runs
-    Alpine runs in this suite.
+    Now the cell's `title` carried it, and the change shows a highlight
+    that then fades again. Since the value history (design 2026-11-11) the
+    age is the subtitle of the history window instead: a native `title`
+    would open a second tooltip over the window. This proves that both are
+    delivered - NOT that they look that way in the browser: no engine that
+    applies CSS or runs Alpine runs in this suite.
     """
     client, _, _ = api
     page = (await client.get("/")).text
-    assert "signalAgeTitle(signal)" in page
+    assert 'x-text="signalAgeTitle(historyOpen.signal)"' in page
+    assert ':title="signalAgeTitle(' not in page
     assert "'value-fresh': signalIsFresh(signal)" in page
     # No longer anywhere in the text flow - that was the cause of the jitter.
     assert 'x-text="signalSeenText(signal)"' not in page
@@ -18210,3 +18213,148 @@ def test_the_export_screen_compares_only_with_the_uploaded_project_file():
     # the pill of one that differs.
     assert values["hint1"]  # the matches-the-file text (no catalogue loaded here)
     assert values["hint2"] == ""
+
+
+# ---------------------------------------------------------------------------
+# The value history window (design 2026-11-11): every real change of a
+# signal while the tab is open, behind a hover on its value. These run the
+# real `app.js` in node, since the logic is in what gets counted and dropped,
+# not in the markup.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_history_records_only_real_changes():
+    """A resend of the same value - a reconnect, a full resend - is not a
+    change, and counting it would make a quiet motion sensor look busy. The
+    heartbeat belongs to no signal at all."""
+    values = _app_state(
+        """
+        state.seedValueHistory([{ key: "d1_1_occ", title: "Presence", value: false }], 1000);
+        state.recordValueHistory("d1_1_occ", false, 2000);
+        state.recordValueHistory("d1_1_occ", true, 3000);
+        state.recordValueHistory("d1_1_occ", true, 4000);
+        state.recordValueHistory("d1_1_occ", false, 5000);
+        state.recordValueHistory("bridge_alive", 1, 6000);
+        state.recordValueHistory("d1_1_list", [1, 2], 7000);
+        state.recordValueHistory("d1_1_list", [1, 2], 8000);
+        console.log(JSON.stringify({
+          occ: state.valueHistory.d1_1_occ,
+          heartbeat: state.valueHistory.bridge_alive ?? null,
+          list: state.valueHistory.d1_1_list.length,
+        }));
+        """
+    )
+    assert values["occ"] == [
+        {"at": 1000, "value": False, "initial": True},
+        {"at": 3000, "value": True, "initial": False},
+        {"at": 5000, "value": False, "initial": False},
+    ]
+    assert values["heartbeat"] is None
+    assert values["list"] == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_history_is_capped_and_a_reload_of_the_list_keeps_it():
+    """The oldest entries go once the cap is reached, so a power meter
+    reporting every few seconds cannot grow the tab without end. And
+    `loadSignals` running again for a device that gained a signal must not
+    start the existing histories over."""
+    limit = _js_constant("VALUE_HISTORY_LIMIT")
+    values = _app_state(
+        f"""
+        state.seedValueHistory([{{ key: "d1_2_power", title: "Power", value: 0 }}], 0);
+        for (let i = 1; i <= {limit} + 10; i += 1) {{
+          state.recordValueHistory("d1_2_power", i, i * 1000);
+        }}
+        state.seedValueHistory([{{ key: "d1_2_power", title: "Power", value: 999 }}], 1);
+        const entries = state.valueHistory.d1_2_power;
+        console.log(JSON.stringify({{
+          length: entries.length,
+          first: entries[0].value,
+          last: entries[entries.length - 1].value,
+        }}));
+        """
+    )
+    assert values == {"length": limit, "first": 11, "last": limit + 10}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_history_counts_switch_ons_and_lists_newest_first():
+    """The chip answers the motion sensor question - how often did it go
+    on - and the starting value is not a change. The list runs newest
+    first, each row with how long its value held."""
+    values = _app_state(
+        """
+        const signal = { key: "d1_1_occ", title: "Presence", value: false };
+        state.signalsByDevice = { 1: [signal] };
+        state.seedValueHistory([signal], 0);
+        state.recordValueHistory("d1_1_occ", true, 10000);
+        state.recordValueHistory("d1_1_occ", false, 100000);
+        state.recordValueHistory("d1_1_occ", true, 130000);
+        state.liveValues = { d1_1_occ: true };
+        state.nowTick = 136000;
+        const power = { key: "d1_2_power", title: "Power", value: 5, unit: "W" };
+        state.seedValueHistory([power], 0);
+        state.recordValueHistory("d1_2_power", 7, 1000);
+        state.liveValues.d1_2_power = 7;
+        const rows = state.historyRows(signal);
+        console.log(JSON.stringify({
+          count: state.historyCountText(signal),
+          powerCount: state.historyCountText(power),
+          durations: rows.map((row) => row.duration),
+          values: rows.map((row) => row.value),
+          initial: rows.map((row) => row.initial),
+        }));
+        """,
+        translations={
+            "web.history.count_on": "{count}× {value}",
+            "web.history.count_changes": "{count} Wechsel",
+            "web.history.duration_running": "seit {duration}",
+            "web.format.true": "Ja",
+        },
+    )
+    assert values["count"] == "2× Ja"
+    assert values["powerCount"] == "1 Wechsel"
+    assert values["durations"] == ["seit 6 s", "30 s", "1:30 min", "10 s"]
+    assert values["values"] == [True, False, True, False]
+    assert values["initial"] == [False, False, False, True]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_history_strip_draws_the_on_spans_of_the_last_hour():
+    """The strip covers the last hour. The stretch before the tab started
+    listening is unknown, not off; a span that began before the window is
+    clipped to its start; a value without an axis gets no strip."""
+    values = _app_state(
+        """
+        const hour = 3600000;
+        const now = 10 * hour;
+        state.nowTick = now;
+        const occ = { key: "d1_1_occ", title: "Presence", value: true };
+        state.seedValueHistory([occ], now - 2 * hour);
+        state.recordValueHistory("d1_1_occ", false, now - 0.75 * hour);
+        state.recordValueHistory("d1_1_occ", true, now - 0.25 * hour);
+        state.recordValueHistory("d1_1_occ", false, now - 0.15 * hour);
+        const late = { key: "d2_1_occ", title: "Presence", value: false };
+        state.seedValueHistory([late], now - 0.5 * hour);
+        const text = { key: "d3_1_mode", title: "Mode", value: "auto" };
+        state.seedValueHistory([text], now - 0.5 * hour);
+        const round = (n) => Math.round(n * 10) / 10;
+        const strip = state.historyStrip(occ);
+        console.log(JSON.stringify({
+          kind: strip.kind,
+          unknown: strip.unknown,
+          spans: strip.spans.map((s) => [round(s.left), round(s.width)]),
+          ticks: strip.ticks.length,
+          lateUnknown: round(state.historyStrip(late).unknown),
+          text: state.historyStrip(text),
+        }));
+        """
+    )
+    assert values["kind"] == "bool"
+    assert values["unknown"] == 0
+    assert values["spans"] == [[0, 25], [75, 10]]
+    assert values["ticks"] == 5
+    assert values["lateUnknown"] == 50
+    assert values["text"] is None

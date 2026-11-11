@@ -64,6 +64,27 @@ const HEARTBEAT_KEY = "bridge_alive";
 // elsewhere.
 const VALUE_FRESH_MS = 2500;
 
+// The value history behind each value cell (design 2026-11-11): every real
+// change a signal goes through while this tab is open, so a motion sensor's
+// triggers can be counted without writing a statistic in Loxone. Kept in the
+// tab's memory only - a reload starts it over, and nothing reaches the server.
+// The cap bounds a long session the same way `DIAGNOSTICS_LINE_LIMIT` does: a
+// power meter reporting every few seconds would otherwise grow without end.
+// The oldest entries go first.
+const VALUE_HISTORY_LIMIT = 200;
+
+// The span the strip at the top of the history window covers, ending now.
+// An hour is long enough to see a motion sensor's rhythm and short enough
+// that a two-second trigger still shows as a visible mark on a 250px bar.
+const VALUE_HISTORY_WINDOW_MS = 60 * 60 * 1000;
+
+// How long the pointer must rest on a value before its history opens, and
+// how long the window stays after the pointer leaves. The first keeps a
+// pointer crossing a tile from flashing windows open; the second lets the
+// pointer travel from the value into the window to scroll its list.
+const VALUE_HISTORY_OPEN_DELAY_MS = 250;
+const VALUE_HISTORY_CLOSE_DELAY_MS = 200;
+
 // How long `applyUpdate()` keeps polling after a successful POST before it
 // gives up on ever seeing the sidecar collect the request - see
 // `updateAwaitingPickup()`/`updateNeverCollected()` and the comment on
@@ -258,6 +279,33 @@ const LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
 // state, because it only needs to tell the messages apart and no one
 // else cares about it.
 let toastCounter = 0;
+
+/** Whether two values a signal reported are the same value. Most are
+ * numbers, booleans or strings; a list or a struct arrives as a fresh
+ * object every time and is compared by its content. */
+function sameHistoryValue(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return false;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** How long a value held, in the shape the hold-time chip already uses:
+ * "42 s", "3:08 min", and "1:05 h" once it passes an hour. */
+function historyDuration(ms) {
+  const whole = Math.max(0, Math.round(ms / 1000));
+  if (whole < 60) {
+    return `${whole} s`;
+  }
+  const minutes = Math.floor(whole / 60);
+  if (minutes < 60) {
+    return `${minutes}:${String(whole % 60).padStart(2, "0")} min`;
+  }
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`;
+}
 
 /**
  * Error for a call without a valid session - its own class so the UI can
@@ -921,6 +969,19 @@ function app() {
     // Ticks every second so the "... ago" labels keep up. Without this
     // field, Alpine would see no reason to redraw them.
     nowTick: Date.now(),
+    // Per signal key, the values it went through while this tab was open,
+    // oldest first: `{ at, value, initial }`. `initial` marks the value the
+    // signal list carried when it loaded - the starting point, not a change.
+    // See `recordValueHistory` and VALUE_HISTORY_LIMIT.
+    valueHistory: {},
+    // VALUE_HISTORY_LIMIT, for the window's footer to name.
+    valueHistoryLimit: VALUE_HISTORY_LIMIT,
+    // The one open history window, or null: `{ signal, top, bottom, left,
+    // arrowX, above, pinned }`. One window for the whole page, not one per
+    // cell - see `openHistory` for where it is placed and why it moves.
+    historyOpen: null,
+    historyOpenTimer: null,
+    historyCloseTimer: null,
     labelDrafts: {},
     deviceActionError: null,
     // A removal the server could not route to a radio - the device's
@@ -1598,6 +1659,21 @@ function app() {
       window.addEventListener("hashchange", () => {
         this.applyHash();
       });
+      // A history window is placed against the value it belongs to
+      // (`openHistory`); once anything scrolls, that value moves and the
+      // window would point at the wrong row. Capture, because a scroll
+      // does not bubble and the signal list scrolls inside its own
+      // container, not the window. The window's own list is the one
+      // scroll that must not close it.
+      window.addEventListener(
+        "scroll",
+        (event) => {
+          if (this.historyOpen && !event.target.closest?.(".history-pop")) {
+            this.closeHistory();
+          }
+        },
+        { capture: true, passive: true },
+      );
       // The commissioning tab and the end time of the window this tab
       // opened survive a reload (`recallCommission()`). A reload does NOT
       // close the window: the page counts down to the server's own end
@@ -3754,6 +3830,286 @@ function app() {
       return this.sinceText(this.liveSeenAt[signal.key]);
     },
 
+    // ---------------------------------------------------------------------
+    // Value history (design 2026-11-11)
+    // ---------------------------------------------------------------------
+
+    /** Appends one arrived value to its signal's history - but only a real
+     * change. The bridge sends a value again without it having changed
+     * (a full resend, a reconnect), and counting those would make a quiet
+     * motion sensor look busy. The heartbeat belongs to no signal. */
+    recordValueHistory(key, value, at) {
+      if (key === HEARTBEAT_KEY) {
+        return;
+      }
+      const entries = this.valueHistory[key] ?? (this.valueHistory[key] = []);
+      const last = entries[entries.length - 1];
+      if (last && sameHistoryValue(last.value, value)) {
+        return;
+      }
+      entries.push({ at, value, initial: false });
+      if (entries.length > VALUE_HISTORY_LIMIT) {
+        entries.splice(0, entries.length - VALUE_HISTORY_LIMIT);
+      }
+    },
+
+    /** Gives every signal of a freshly loaded list its starting point: the
+     * value the server reported at load time. The live connection sends no
+     * snapshot when it opens, only changes, so without this the first
+     * change would have nothing to be a change FROM, and a resend of the
+     * current value would count as one. A signal that already has a
+     * history keeps it - `loadSignals` runs again for a device that gained
+     * a signal, and that must not start the others over. */
+    seedValueHistory(signals, at) {
+      for (const signal of signals ?? []) {
+        if (signal.value === undefined || this.valueHistory[signal.key]) {
+          continue;
+        }
+        this.valueHistory[signal.key] = [{ at, value: signal.value, initial: true }];
+      }
+    },
+
+    historyEntries(signal) {
+      return (signal && this.valueHistory[signal.key]) || [];
+    },
+
+    /** The history newest first, each entry with how long it held: up to
+     * the next change, or up to now for the newest one. */
+    historyRows(signal) {
+      const entries = this.historyEntries(signal);
+      const rows = [];
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const entry = entries[i];
+        const next = entries[i + 1];
+        const held = (next ? next.at : this.nowTick) - entry.at;
+        rows.push({
+          id: entry.at + ":" + i,
+          time: this.historyTime(entry.at),
+          value: entry.value,
+          initial: entry.initial,
+          duration: next
+            ? historyDuration(held)
+            : t("web.history.duration_running", { duration: historyDuration(held) }),
+        });
+      }
+      return rows;
+    },
+
+    /** The chip in the window's head. For an on/off signal the number of
+     * times it went on - the motion sensor question; for anything else the
+     * number of changes. The starting value is not a change and does not
+     * count. */
+    historyCountText(signal) {
+      const changes = this.historyEntries(signal).filter((entry) => !entry.initial);
+      if (typeof this.liveValueOf(signal) === "boolean") {
+        const on = changes.filter((entry) => entry.value === true).length;
+        return t("web.history.count_on", { count: on, value: this.formatValue(true) });
+      }
+      return t("web.history.count_changes", { count: changes.length });
+    },
+
+    /** Clock time to the second; with the date in front once it is not
+     * today, since a tab can stay open past midnight. */
+    historyTime(at) {
+      const locale = this.language === "de" ? "de-DE" : "en-GB";
+      const date = new Date(at);
+      const time = date.toLocaleTimeString(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      if (date.toDateString() === new Date(this.nowTick).toDateString()) {
+        return time;
+      }
+      return date.toLocaleDateString(locale, { day: "2-digit", month: "2-digit" }) + " " + time;
+    },
+
+    /** The strip above the list, over the last VALUE_HISTORY_WINDOW_MS.
+     * On/off signals get the spans they were on; numbers get a step line
+     * scaled to what the hour held. Anything else (text, lists) gets none -
+     * it has no axis to draw on. The stretch before the tab started
+     * listening is marked `unknown` rather than drawn as "off": the tab
+     * does not know what happened there. Positions are percentages for the
+     * bar and 0..250 x 0..36 for the line's viewBox. */
+    historyStrip(signal) {
+      const entries = this.historyEntries(signal);
+      if (entries.length === 0) {
+        return null;
+      }
+      const end = this.nowTick;
+      const start = end - VALUE_HISTORY_WINDOW_MS;
+      const position = (at) => (Math.min(Math.max(at, start), end) - start) / VALUE_HISTORY_WINDOW_MS;
+      const ticks = [0, 1, 2, 3].map((quarter) =>
+        new Date(start + (quarter * VALUE_HISTORY_WINDOW_MS) / 4).toLocaleTimeString(
+          this.language === "de" ? "de-DE" : "en-GB",
+          { hour: "2-digit", minute: "2-digit", hour12: false },
+        ),
+      );
+      ticks.push(t("web.history.now"));
+      const unknown = entries[0].at > start ? position(entries[0].at) * 100 : 0;
+      const current = entries[entries.length - 1].value;
+      if (typeof current === "boolean") {
+        const spans = [];
+        entries.forEach((entry, i) => {
+          const until = i + 1 < entries.length ? entries[i + 1].at : end;
+          if (entry.value === true && until > start) {
+            const left = position(entry.at) * 100;
+            spans.push({ id: entry.at + ":" + i, left, width: position(until) * 100 - left });
+          }
+        });
+        return { kind: "bool", ticks, unknown, spans };
+      }
+      if (typeof current !== "number") {
+        return null;
+      }
+      // Only the numbers the hour actually shows set the scale - the value
+      // held when the window opened included, since the line starts there.
+      const shown = entries.filter(
+        (entry, i) =>
+          typeof entry.value === "number" &&
+          (i + 1 === entries.length || entries[i + 1].at > start),
+      );
+      const values = shown.map((entry) => entry.value);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const y = (value) => (max === min ? 18 : 34 - ((value - min) / (max - min)) * 30);
+      const points = [];
+      shown.forEach((entry, i) => {
+        const x = position(entry.at) * 250;
+        if (i > 0) {
+          points.push(`${x.toFixed(1)},${y(shown[i - 1].value).toFixed(1)}`);
+        }
+        points.push(`${x.toFixed(1)},${y(entry.value).toFixed(1)}`);
+      });
+      points.push(`250,${y(current).toFixed(1)}`);
+      const line = points.join(" ");
+      const firstX = points[0].split(",")[0];
+      const unit = signal.unit ? " " + signal.unit : "";
+      return {
+        kind: "number",
+        ticks,
+        unknown,
+        line,
+        area: `${firstX},36 ${line} 250,36`,
+        endY: y(current),
+        min: this.formatValue(min) + unit,
+        max: this.formatValue(max) + unit,
+      };
+    },
+
+    /** Hovering a value: opens its history after a short rest, so a
+     * pointer that only crosses the tile opens nothing. Hovering the open
+     * value again only cancels a pending close. */
+    hoverHistory(signal, element) {
+      window.clearTimeout(this.historyCloseTimer);
+      if (!signal) {
+        return;
+      }
+      // `checkVisibility`, not only the state: a `<dialog>` closed by
+      // code rather than by a click or Escape hides the window inside it
+      // without passing through `closeHistory`, and the same value must
+      // still open it again.
+      const showing = this.$refs.historyPop?.checkVisibility?.() ?? true;
+      if (this.historyOpen?.signal.key === signal.key && showing) {
+        return;
+      }
+      window.clearTimeout(this.historyOpenTimer);
+      this.historyOpenTimer = window.setTimeout(() => {
+        this.openHistory(signal, element, false);
+      }, VALUE_HISTORY_OPEN_DELAY_MS);
+    },
+
+    /** The pointer left the value or the window. A pinned window (opened by
+     * a click or tap) stays until the next click elsewhere. */
+    leaveHistory() {
+      window.clearTimeout(this.historyOpenTimer);
+      if (!this.historyOpen || this.historyOpen.pinned) {
+        return;
+      }
+      this.historyCloseTimer = window.setTimeout(() => {
+        this.closeHistory();
+      }, VALUE_HISTORY_CLOSE_DELAY_MS);
+    },
+
+    /** A click or tap on a value. Touch screens have no hover, so this is
+     * how a phone opens the window; on a desktop it keeps an open window
+     * from closing when the pointer wanders off. A second click on the
+     * same value closes it. */
+    toggleHistory(signal, element) {
+      window.clearTimeout(this.historyOpenTimer);
+      if (!signal) {
+        return;
+      }
+      if (this.historyOpen?.signal.key === signal.key && this.historyOpen.pinned) {
+        this.closeHistory();
+        return;
+      }
+      this.openHistory(signal, element, true);
+    },
+
+    /** Places the window against the value: below it and right-aligned,
+     * above it when the space below is short, and always inside the
+     * viewport. It is a manual popover, so it sits in the top layer above
+     * the sticky header and the tile menus. Inside the open signal list it
+     * has to move INTO that `<dialog>`: a modal dialog makes everything
+     * outside itself inert, popovers included, and the pointer could not
+     * reach the window's list to scroll it. */
+    openHistory(signal, element, pinned) {
+      const pop = this.$refs.historyPop;
+      if (!pop || !element) {
+        return;
+      }
+      const host = element.closest("dialog[open]") ?? document.body;
+      if (pop.parentElement !== host) {
+        if (pop.matches(":popover-open")) {
+          pop.hidePopover();
+        }
+        host.appendChild(pop);
+      }
+      const rect = element.getBoundingClientRect();
+      const width = Math.min(288, window.innerWidth - 16);
+      const left = Math.min(
+        Math.max(8, rect.right + 12 - width),
+        window.innerWidth - width - 8,
+      );
+      const above = rect.bottom + 380 > window.innerHeight && rect.top > window.innerHeight / 2;
+      this.historyOpen = {
+        signal,
+        pinned,
+        above,
+        left,
+        top: above ? null : rect.bottom + 8,
+        bottom: above ? window.innerHeight - rect.top + 8 : null,
+        arrowX: Math.min(Math.max(12, rect.left + rect.width / 2 - left - 5), width - 22),
+      };
+      if (!pop.matches(":popover-open")) {
+        pop.showPopover();
+      }
+    },
+
+    closeHistory() {
+      window.clearTimeout(this.historyOpenTimer);
+      window.clearTimeout(this.historyCloseTimer);
+      this.historyOpen = null;
+      const pop = this.$refs.historyPop;
+      if (pop?.matches(":popover-open")) {
+        pop.hidePopover();
+      }
+    },
+
+    /** Any click outside the window and outside a value closes a pinned
+     * window - the value's own click is `toggleHistory`'s to handle. */
+    historyClickAway(event) {
+      if (!this.historyOpen) {
+        return;
+      }
+      if (event.target.closest?.(".history-pop, .has-history")) {
+        return;
+      }
+      this.closeHistory();
+    },
+
     /** Whether this signal has just now received a value. Carries the
      * highlight that draws the eye to the right spot - without anything
      * in the row's layout moving at all. Reads `nowTick`, so Alpine drops
@@ -5718,6 +6074,7 @@ function app() {
           "GET",
           `/api/devices/${deviceId}/signals`,
         );
+        this.seedValueHistory(this.signalsByDevice[deviceId], Date.now());
       } catch (error) {
         this.signalsError = t("web.signals.load_error", { message: error.message });
       }
@@ -9921,6 +10278,7 @@ function app() {
         }
         this.liveValues[message.key] = message.value;
         const now = Date.now();
+        this.recordValueHistory(message.key, message.value, now);
         this.liveSeenAt[message.key] = now;
         // Which device a message belongs to is in its key: signal keys
         // start with `d<device id>_`. The heartbeat (`bridge_alive`)
