@@ -5396,3 +5396,241 @@ main.main-export {
   font-size: 0.82rem;
   color: var(--text-muted);
 }
+
+/* --- The value history window (design 2026-11-11) -------------------------
+ *
+ * A value with a history behind it says so the usual way: a dotted underline
+ * and the help cursor. Neither changes the cell's box, so the jitter rule at
+ * `.value` holds - nothing about the row's width moves when the window opens.
+ * The open value carries an outline, again outside the box. */
+.value.has-history {
+  cursor: help;
+  text-decoration: underline dotted var(--text-muted);
+  text-underline-offset: 3px;
+}
+
+.value.history-active {
+  outline: 1px solid var(--accent);
+}
+
+/* A manual popover lands in the top layer with the UA's centring
+ * (`inset: 0; margin: auto`) - both are reset, and `openHistory` sets the
+ * real position through `left` and `top`/`bottom`. `overflow: visible` lets
+ * the arrow stand out above the border. */
+.history-pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(288px, calc(100vw - 16px));
+  padding: 0;
+  overflow: visible;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 0.75rem;
+}
+
+.history-pop::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: var(--arrow-x, 22px);
+  width: 10px;
+  height: 10px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.history-pop-above::before {
+  top: auto;
+  bottom: -6px;
+  transform: rotate(225deg);
+}
+
+.history-head {
+  padding: 0.55rem 0.7rem 0.45rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.history-title > :first-child {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.history-count {
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: var(--type-bg);
+  color: var(--type-fg);
+}
+
+.history-sub {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+.history-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0.7rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The on/off bar: grey for off, green for the spans the signal was on,
+ * hatched for the stretch before this tab was listening - unknown is not
+ * the same as off. */
+.history-bar {
+  position: relative;
+  height: 14px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--off-bg);
+}
+
+.history-bar-unknown {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 3px,
+    var(--border) 3px 5px
+  );
+}
+
+.history-bar-on {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: var(--ok);
+}
+
+.history-spark {
+  display: block;
+  width: 100%;
+  height: 38px;
+}
+
+.history-spark-unknown {
+  fill: var(--off-bg);
+}
+
+.history-spark-area {
+  fill: var(--type-bg);
+  stroke: none;
+}
+
+.history-spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.history-spark-dot {
+  fill: var(--accent);
+}
+
+.history-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--text-muted);
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+  max-height: 196px;
+  overflow-y: auto;
+}
+
+.history-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.12rem 0.7rem;
+}
+
+.history-list li:nth-child(odd) {
+  background: var(--bg);
+}
+
+.history-time {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.history-start {
+  margin-left: 0.3rem;
+  font-family: system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.history-value {
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.history-value-on {
+  color: var(--ok);
+}
+
+.history-value-off {
+  color: var(--text-muted);
+}
+
+.history-duration {
+  min-width: 4.2rem;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.history-empty {
+  margin: 0;
+  padding: 0.3rem 0.7rem 0.5rem;
+  color: var(--text-muted);
+}
+
+.history-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}

@@ -1527,9 +1527,11 @@
                           ></span>
                         </span>
                         <span
-                          class="value"
-                          :class="{ 'value-fresh': signalIsFresh(signal) }"
-                          :title="signalAgeTitle(signal)"
+                          class="value has-history"
+                          :class="{ 'value-fresh': signalIsFresh(signal), 'history-active': historyOpen?.signal.key === signal.key }"
+                          @mouseenter="hoverHistory(signal, $el)"
+                          @mouseleave="leaveHistory()"
+                          @click="toggleHistory(signal, $el)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
                       </span>
@@ -1565,9 +1567,11 @@
                     <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
                     <span class="value-key" x-text="t('web.devices.battery_label')"></span>
                     <span
-                      class="value"
-                      :class="{ 'value-fresh': signalIsFresh(batterySignalFor(device.id)) }"
-                      :title="signalAgeTitle(batterySignalFor(device.id))"
+                      class="value has-history"
+                      :class="{ 'value-fresh': signalIsFresh(batterySignalFor(device.id)), 'history-active': historyOpen?.signal.key === batterySignalFor(device.id)?.key }"
+                      @mouseenter="hoverHistory(batterySignalFor(device.id), $el)"
+                      @mouseleave="leaveHistory()"
+                      @click="toggleHistory(batterySignalFor(device.id), $el)"
                       x-text="formatValue(liveValueOf(batterySignalFor(device.id))) + (batterySignalFor(device.id)?.unit ? ' ' + batterySignalFor(device.id).unit : '')"
                     ></span>
                   </div>
@@ -4084,9 +4088,11 @@
                           moving.
                         -->
                         <span
-                          class="value col-right"
-                          :class="{ 'value-fresh': signalIsFresh(signal) }"
-                          :title="signalAgeTitle(signal)"
+                          class="value col-right has-history"
+                          :class="{ 'value-fresh': signalIsFresh(signal), 'history-active': historyOpen?.signal.key === signal.key }"
+                          @mouseenter="hoverHistory(signal, $el)"
+                          @mouseleave="leaveHistory()"
+                          @click="toggleHistory(signal, $el)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
                         <!-- The same control as in the export column,
@@ -5751,6 +5757,116 @@
       </div>
       </template>
     </dialog>
+
+    <!--
+      The value history (design 2026-11-11): one window for the whole page,
+      opened from any value cell - a tile's rows, its battery row, the
+      signal list. A manual popover, so it sits in the top layer above the
+      sticky header and the tile menus; `openHistory` places it against the
+      value and, while the signal list is open, moves it into that
+      `<dialog>` (reasoning there). The content is an `x-if`, so a closed
+      window evaluates nothing.
+    -->
+    <div
+      x-ref="historyPop"
+      popover="manual"
+      class="history-pop"
+      :class="{ 'history-pop-above': historyOpen?.above }"
+      role="dialog"
+      :aria-label="historyOpen ? t('web.history.aria_label', { signal: historyOpen.signal.title }) : ''"
+      :style="historyOpen ? { left: historyOpen.left + 'px', top: historyOpen.top === null ? 'auto' : historyOpen.top + 'px', bottom: historyOpen.bottom === null ? 'auto' : historyOpen.bottom + 'px', '--arrow-x': historyOpen.arrowX + 'px' } : {}"
+      @mouseenter="hoverHistory(historyOpen?.signal, null)"
+      @mouseleave="leaveHistory()"
+      @click.window="historyClickAway($event)"
+      @keydown.escape.window="closeHistory()"
+    >
+      <template x-if="historyOpen">
+        <div class="history-body">
+          <div class="history-head">
+            <div class="history-title">
+              <span x-text="historyOpen.signal.title"></span>
+              <span class="history-count" x-text="historyCountText(historyOpen.signal)"></span>
+            </div>
+            <div class="history-sub" x-text="signalAgeTitle(historyOpen.signal)"></div>
+          </div>
+          <template x-if="historyStrip(historyOpen.signal)">
+            <div class="history-strip">
+              <template x-if="historyStrip(historyOpen.signal).kind === 'bool'">
+                <div class="history-bar" :aria-label="t('web.history.strip_label')" role="img">
+                  <span
+                    class="history-bar-unknown"
+                    :style="{ width: historyStrip(historyOpen.signal).unknown + '%' }"
+                  ></span>
+                  <template x-for="span in historyStrip(historyOpen.signal).spans" :key="span.id">
+                    <span class="history-bar-on" :style="{ left: span.left + '%', width: span.width + '%' }"></span>
+                  </template>
+                </div>
+              </template>
+              <template x-if="historyStrip(historyOpen.signal).kind === 'number'">
+                <div>
+                  <svg
+                    class="history-spark"
+                    viewBox="0 0 250 38"
+                    preserveAspectRatio="none"
+                    role="img"
+                    :aria-label="t('web.history.strip_label')"
+                  >
+                    <rect
+                      class="history-spark-unknown"
+                      x="0"
+                      y="0"
+                      height="38"
+                      :width="historyStrip(historyOpen.signal).unknown * 2.5"
+                    ></rect>
+                    <polygon class="history-spark-area" :points="historyStrip(historyOpen.signal).area"></polygon>
+                    <polyline class="history-spark-line" :points="historyStrip(historyOpen.signal).line"></polyline>
+                    <circle class="history-spark-dot" cx="248" :cy="historyStrip(historyOpen.signal).endY" r="2.5"></circle>
+                  </svg>
+                  <div class="history-axis">
+                    <span x-text="t('web.history.min', { value: historyStrip(historyOpen.signal).min })"></span>
+                    <span x-text="t('web.history.max', { value: historyStrip(historyOpen.signal).max })"></span>
+                  </div>
+                </div>
+              </template>
+              <div class="history-axis">
+                <template x-for="tick in historyStrip(historyOpen.signal).ticks" :key="tick">
+                  <span x-text="tick"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+          <ul class="history-list" x-show="historyEntries(historyOpen.signal).length > 0">
+            <template x-for="line in historyRows(historyOpen.signal)" :key="line.id">
+              <li :class="{ 'history-initial': line.initial }">
+                <span class="history-time">
+                  <span x-text="line.time"></span>
+                  <span
+                    class="history-start"
+                    x-show="line.initial"
+                    x-text="t('web.history.start')"
+                  ></span>
+                </span>
+                <span
+                  class="history-value"
+                  :class="{ 'history-value-on': line.value === true, 'history-value-off': line.value === false }"
+                  x-text="formatValue(line.value) + (historyOpen.signal.unit ? ' ' + historyOpen.signal.unit : '')"
+                ></span>
+                <span class="history-duration" x-text="line.duration"></span>
+              </li>
+            </template>
+          </ul>
+          <p
+            class="history-empty"
+            x-show="historyEntries(historyOpen.signal).filter((entry) => !entry.initial).length === 0"
+            x-text="historyEntries(historyOpen.signal).length === 0 ? t('web.history.empty_no_value') : t('web.history.empty_unchanged')"
+          ></p>
+          <div class="history-foot">
+            <span x-text="t('web.history.only_this_tab')"></span>
+            <span x-text="t('web.history.entry_count', { count: historyEntries(historyOpen.signal).length, limit: valueHistoryLimit })"></span>
+          </div>
+        </div>
+      </template>
+    </div>
 
     <!--
       Short messages as an overlay. `position: fixed` means: they sit

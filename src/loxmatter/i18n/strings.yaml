@@ -3647,6 +3647,47 @@ web.export.projectsync_download_button:
   en: "Download patched file"
   de: "Gepatchte Datei herunterladen"
 
+# --- web.history — the value history window (design 2026-11-11) ---
+web.history.aria_label:
+  en: "History of {signal}"
+  de: "Verlauf von {signal}"
+web.history.count_on:
+  en: "{count}× {value}"
+  de: "{count}× {value}"
+web.history.count_changes:
+  en: "{count} changes"
+  de: "{count} Wechsel"
+web.history.duration_running:
+  en: "{duration} so far"
+  de: "seit {duration}"
+web.history.now:
+  en: "now"
+  de: "jetzt"
+web.history.start:
+  en: "Start"
+  de: "Start"
+web.history.min:
+  en: "min {value}"
+  de: "min. {value}"
+web.history.max:
+  en: "max {value}"
+  de: "max. {value}"
+web.history.strip_label:
+  en: "The last 60 minutes"
+  de: "Die letzten 60 Minuten"
+web.history.empty_no_value:
+  en: "No value received yet."
+  de: "Noch kein Wert empfangen."
+web.history.empty_unchanged:
+  en: "No change since this tab was opened."
+  de: "Seit dem Öffnen des Tabs keine Änderung."
+web.history.only_this_tab:
+  en: "Kept in this tab only"
+  de: "Nur in diesem Tab"
+web.history.entry_count:
+  en: "{count} of max. {limit} entries"
+  de: "{count} von max. {limit} Einträgen"
+
 # --- web.format — shared formatting helpers ---
 web.format.never:
   en: "never"
