@@ -607,7 +607,7 @@ UPKEEP_CHECKED="$UPDATE_DIR/otbr-upkeep-checked"
 UPKEEP_TRIED="$UPDATE_DIR/otbr-upkeep-tried"
 UPKEEP_PULL_FAILED="$UPDATE_DIR/otbr-upkeep-pull-failed-at"
 
-# What Compose would create, reduced to the four fields that decide
+# What Compose would create, reduced to the six fields that decide
 # whether the running container is still the one asked for. A device entry
 # is a string in Compose 2.27 (the updater image's) - "source:target", maybe
 # with ":permissions" - and an object in later versions; both reduce to
@@ -620,6 +620,19 @@ UPKEEP_PULL_FAILED="$UPDATE_DIR/otbr-upkeep-pull-failed-at"
 # of "path[:options]", `docker inspect` a map of path to options (both
 # measured on the second test Pi); each side reduces to the list form,
 # options kept, so a changed size is drift and the same mount is not.
+#
+# command and log are the fifth and sixth (18 November 2026). The Compose
+# file's x-logging cap of 0.7.0 and its `--debug-level` never reached a
+# running otbr: neither is one of the fields above, so the upkeep saw no
+# drift, and on the test Pi the border router went on writing its full
+# debug log until the 29 GB SD card was full. Compose prints `command` as
+# a list of words, `docker inspect` the same list as `.Config.Cmd`. The log
+# setting is `{driver, options}` in Compose and `{Type, Config}` in `docker
+# inspect`; both reduce to `{driver, options}` with the options sorted by
+# key, so the same cap read from either side compares equal. A Compose file
+# without `logging:` - one from before 0.7.0, as a bridge rollback brings
+# back - reads as json-file without options, which is what Docker gives a
+# container created from it.
 # shellcheck disable=SC2016  # a jq program, expanded by jq
 UPKEEP_DESIRED='
   .services.otbr as $s
@@ -634,9 +647,12 @@ UPKEEP_DESIRED='
      radio_url: (($s.environment // {})
                  | if type == "array"
                    then (map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))
-                   else (.RADIO_URL // "") end)}'
+                   else (.RADIO_URL // "") end),
+     command: ($s.command // null),
+     log: {driver: ($s.logging.driver // "json-file"),
+           options: (($s.logging.options // {}) | to_entries | sort_by(.key) | from_entries)}}'
 
-# The same four fields of the running container. `.Config.Image` is the
+# The same six fields of the running container. `.Config.Image` is the
 # reference the container was created from, as written, and device paths
 # are kept as given - symlinks unresolved - so they compare with Compose's
 # own strings.
@@ -647,7 +663,10 @@ UPKEEP_ACTUAL='
      devices: ((.HostConfig.Devices // []) | map("\(.PathOnHost):\(.PathInContainer)") | sort),
      tmpfs: ((.HostConfig.Tmpfs // {}) | to_entries
              | map(if .value == "" then .key else "\(.key):\(.value)" end) | sort),
-     radio_url: ((.Config.Env // []) | map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))}'
+     radio_url: ((.Config.Env // []) | map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL=")),
+     command: (.Config.Cmd // null),
+     log: {driver: (.HostConfig.LogConfig.Type // "json-file"),
+           options: ((.HostConfig.LogConfig.Config // {}) | to_entries | sort_by(.key) | from_entries)}}'
 
 # The checksum and size `cksum` prints for its input, as one word.
 checksum() {
