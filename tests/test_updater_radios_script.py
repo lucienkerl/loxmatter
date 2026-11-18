@@ -90,6 +90,12 @@ OTBR_DEFAULTS = (
     # 2026: a list of "path[:options]" against a map of path to options.
     "DEFAULT_COMPOSE_TMPFS='[\"/run\"]'\n"
     'DEFAULT_INSPECT_TMPFS=\'{"/run": ""}\'\n'
+    # The command and the log cap, in the shapes Compose 2.27 and `docker
+    # inspect` print them (test Pi, 18 November 2026): the same words as a
+    # list on both sides; `{driver, options}` against `{Type, Config}`.
+    'DEFAULT_COMMAND=\'["--backbone-interface", "eth0", "--debug-level", "5"]\'\n'
+    'DEFAULT_COMPOSE_LOGGING=\'{"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}\'\n'
+    'DEFAULT_INSPECT_LOGCONFIG=\'{"Type": "json-file", "Config": {"max-file": "3", "max-size": "10m"}}\'\n'
 )
 
 DOCKER_STUB = (
@@ -135,23 +141,27 @@ case "$1" in
     if [ ! -f "$FAKE/otbr_state" ]; then
       echo '[]'; echo 'Error: No such object: otbr' >&2; exit 1
     fi
-    printf '[{"Id": "otbr-%s", "Image": "%s", "Config": {"Image": "%s", "Env": ["PATH=/usr/sbin:/usr/bin", "RADIO_URL=%s"]}, "HostConfig": {"Devices": %s, "Tmpfs": %s}}]\n' \
+    printf '[{"Id": "otbr-%s", "Image": "%s", "Config": {"Image": "%s", "Env": ["PATH=/usr/sbin:/usr/bin", "RADIO_URL=%s"], "Cmd": %s}, "HostConfig": {"Devices": %s, "Tmpfs": %s, "LogConfig": %s}}]\n' \
       "$(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0)" \
       "$(cat "$FAKE/actual_image_id" 2>/dev/null || echo "$DEFAULT_IMAGE_ID")" \
       "$(cat "$FAKE/actual_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
       "$(cat "$FAKE/actual_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" \
+      "$(cat "$FAKE/actual_command" 2>/dev/null || echo "$DEFAULT_COMMAND")" \
       "$(cat "$FAKE/actual_devices" 2>/dev/null || echo "$DEFAULT_INSPECT_DEVICES")" \
-      "$(cat "$FAKE/actual_tmpfs" 2>/dev/null || echo "$DEFAULT_INSPECT_TMPFS")"
+      "$(cat "$FAKE/actual_tmpfs" 2>/dev/null || echo "$DEFAULT_INSPECT_TMPFS")" \
+      "$(cat "$FAKE/actual_logconfig" 2>/dev/null || echo "$DEFAULT_INSPECT_LOGCONFIG")"
     exit 0 ;;
   compose)
     case "$*" in *"$(cat "$FAKE/compose_fail" 2>/dev/null || echo __never__)"*) exit 1 ;; esac
     case "$*" in
       *" config "*)
-        printf '{"name": "testhost", "services": {"otbr": {"image": "%s", "devices": %s, "tmpfs": %s, "environment": {"RADIO_URL": "%s"}}}}\n' \
+        printf '{"name": "testhost", "services": {"otbr": {"image": "%s", "devices": %s, "tmpfs": %s, "environment": {"RADIO_URL": "%s"}, "command": %s%s}}}\n' \
           "$(cat "$FAKE/compose_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
           "$(cat "$FAKE/compose_devices" 2>/dev/null || echo "$DEFAULT_COMPOSE_DEVICES")" \
           "$(cat "$FAKE/compose_tmpfs" 2>/dev/null || echo "$DEFAULT_COMPOSE_TMPFS")" \
-          "$(cat "$FAKE/compose_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" ;;
+          "$(cat "$FAKE/compose_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" \
+          "$(cat "$FAKE/compose_command" 2>/dev/null || echo "$DEFAULT_COMMAND")" \
+          "$(if [ -f "$FAKE/compose_logging" ]; then l="$(cat "$FAKE/compose_logging")"; else l="$DEFAULT_COMPOSE_LOGGING"; fi; [ "$l" = absent ] || printf ', "logging": %s' "$l")" ;;
       *" pull "*otbr*)
         # A pull that lasts $FAKE/pull_seconds of the script's clock: it
         # ends once the script's own sleeps have moved the epoch that far.
@@ -2134,6 +2144,52 @@ def test_upkeep_recreates_otbr_that_lacks_the_run_tmpfs(radios):
     assert (state["phase"], state["healthy"]) == ("done", True)
     assert _compose(calls, "pull") == []
     assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_recreates_otbr_for_a_changed_command(radios):
+    """An otbr created before the Compose file passed `--debug-level 5` runs
+    the image's default `-d7` and writes several lines for every Thread frame
+    - 17 GB in seven weeks on the test Pi (18 November 2026). A bridge update
+    does not recreate otbr, so the upkeep has to - once.
+
+    Fault to prove it: leave command out of the comparison - no job starts."""
+    _upkeep(radios)
+    (radios.fake / "actual_command").write_text('["--backbone-interface", "eth0"]')
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_recreates_otbr_that_lacks_the_log_cap(radios):
+    """0.7.0's x-logging cap reached every service the updater recreates,
+    but not otbr: an otbr created before it keeps Docker's unbounded
+    json-file log (`"Config": {}`), 10.1 GB of it on the test Pi.
+
+    Fault to prove it: leave log out of the comparison - no job starts."""
+    _upkeep(radios)
+    (radios.fake / "actual_logconfig").write_text('{"Type": "json-file", "Config": {}}')
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_reads_a_compose_file_without_logging_as_docker_s_default(radios):
+    """A Compose file from before 0.7.0 - as a bridge rollback brings back -
+    has no `logging:`, and the otbr it created has json-file without
+    options. That is no drift, and must not restart the Thread network.
+
+    Fault to prove it: read a missing `logging:` as null - the comparison
+    finds drift and a job starts."""
+    _upkeep(radios)
+    (radios.fake / "compose_logging").write_text("absent")
+    (radios.fake / "actual_logconfig").write_text('{"Type": "json-file", "Config": {}}')
+    _, calls, state = radios()
+    assert state["id"] == "job-0"
+    assert _compose(calls, "up") == []
 
 
 @pytest.mark.parametrize(

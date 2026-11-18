@@ -18,10 +18,14 @@
 OTBR_REST_PORT (border router REST API, 8081).
 
 Unset, both must render exactly as before - the border router's command
-above all, because a changed command recreates `otbr` on the next
-`compose up` and restarts the Thread network for nothing. Rendered by
-`docker compose config` where Docker is installed; the raw strings are
-checked everywhere."""
+above all, because a changed command recreates `otbr` (the updater's
+upkeep compares it) and restarts the Thread network for nothing. Rendered
+by `docker compose config` where Docker is installed; the raw strings are
+checked everywhere.
+
+The same command carries the border router's log level, OTBR_DEBUG_LEVEL,
+5 unless .env says otherwise (18 November 2026): the image's own default,
+7, wrote 17 GB of debug log in seven weeks on the test Pi."""
 
 from __future__ import annotations
 
@@ -72,7 +76,12 @@ needs_compose = pytest.mark.skipif(shutil.which("docker") is None, reason="docke
 @needs_compose
 def test_unset_ports_render_as_before(tmp_path: Path) -> None:
     services = _render(tmp_path, "")["services"]
-    assert services["otbr"]["command"] == ["--backbone-interface", "wlan0"]
+    assert services["otbr"]["command"] == [
+        "--backbone-interface",
+        "wlan0",
+        "--debug-level",
+        "5",
+    ]
     command = services["loxmatter"]["command"]
     assert command[command.index("--listen") + 1] == "8080"
     assert services["loxmatter"]["environment"]["LOXMATTER_OTBR_URL"] == "http://127.0.0.1:8081"
@@ -87,6 +96,8 @@ def test_moved_ports_reach_every_service(tmp_path: Path) -> None:
     assert services["otbr"]["command"] == [
         "--backbone-interface",
         "wlan0",
+        "--debug-level",
+        "5",
         "--trel-url",
         "--rest-listen-port 8084",
     ]
@@ -95,3 +106,15 @@ def test_moved_ports_reach_every_service(tmp_path: Path) -> None:
     assert services["loxmatter"]["environment"]["LOXMATTER_OTBR_URL"] == "http://127.0.0.1:8084"
     health = services["loxmatter-updater"]["environment"]["LOXMATTER_HEALTH_URL"]
     assert health == "http://host.docker.internal:8083/health"
+
+
+@needs_compose
+def test_the_border_router_logs_at_level_5_unless_env_raises_it(tmp_path: Path) -> None:
+    """Fault to prove it: drop `--debug-level` from the command - the image's
+    entrypoint falls back to 7 and the first assertion fails."""
+    services = _render(tmp_path, "")["services"]
+    command = services["otbr"]["command"]
+    assert command[command.index("--debug-level") + 1] == "5"
+    services = _render(tmp_path, "\nOTBR_DEBUG_LEVEL=7\n")["services"]
+    command = services["otbr"]["command"]
+    assert command[command.index("--debug-level") + 1] == "7"

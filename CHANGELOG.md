@@ -19,6 +19,17 @@ people who don't know the code.
   already work keep working exactly as before; for a device with a Home
   Assistant quirk, zigbee2mqtt only adds settings the quirk does not offer.
 
+### Fixed
+
+- **The Thread border router no longer fills the memory card.** It wrote a
+  detailed debug log - several lines for every radio message - into a file
+  inside its container, which 0.7.0's log limit did not reach. On the test
+  Pi that file had grown to 7 GB in seven weeks. The border router now only
+  logs notices and errors. 0.7.0's 30 MB log limit never reached an
+  existing border router either; it now does. The border router restarts
+  once when this update reaches it; the Thread network and its devices stay
+  as they are.
+
 ## [0.7.0] — 2026-11-09
 
 ### Before you update

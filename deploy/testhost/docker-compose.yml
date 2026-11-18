@@ -124,10 +124,24 @@ services:
     # option for the port, so it rides in the one slot the entrypoint
     # passes through to otbr-agent word for word: `--trel-url`'s value
     # lands at the end of OTBR_AGENT_OPTS, and otbr-agent's getopt_long
-    # reads options after the radio URL as well. Unset, the command is
-    # exactly what it always was, so no existing border router is
-    # recreated for it. tests/test_compose_otbr_port.py holds both shapes.
-    command: --backbone-interface ${BACKBONE_IF}${OTBR_REST_PORT:+ --trel-url "--rest-listen-port ${OTBR_REST_PORT}"}
+    # reads options after the radio URL as well. Unset, the command carries
+    # no `--trel-url` at all. tests/test_compose_otbr_port.py holds both
+    # shapes.
+    #
+    # `--debug-level` defaults to 5 (syslog NOTICE). Without it the image's
+    # entrypoint passes `-d7` - full debug output - to otbr-agent and
+    # otbr-web, and the agent writes about seven lines for EVERY frame it
+    # receives from the Thread network, several per second. Measured on the
+    # test Pi on 18 November 2026: in seven weeks rsyslog inside the
+    # container had written 7.1 GB to its own /var/log/syslog and the
+    # entrypoint's `tail -f` of that file another 10.1 GB to Docker's log,
+    # and the 29 GB SD card was full. The x-logging cap above bounds only
+    # Docker's copy; the file inside the container lives in the writable
+    # layer, which no log option reaches - only a lower level keeps it
+    # small. Level 6 still logs every received frame ([I] MeshForwarder,
+    # Mle). OTBR_DEBUG_LEVEL in .env raises it again while chasing a Thread
+    # problem.
+    command: --backbone-interface ${BACKBONE_IF} --debug-level ${OTBR_DEBUG_LEVEL:-5}${OTBR_REST_PORT:+ --trel-url "--rest-listen-port ${OTBR_REST_PORT}"}
     # Without this limit OTBR doesn't start (2026-09-03, measured on a
     # Pi 4). The Docker daemon passes a `nofile` of 1,073,741,816 into the
     # container here; `start-stop-daemon`, which the image's init script
