@@ -202,11 +202,20 @@ profiles_with_thread() {
 # returned directly because the refresh afterwards would otherwise become
 # this function's exit status, and every call site reads that status to
 # decide whether the step failed.
+#
+# With COMPOSE_OVERRIDE set, that file is added after docker-compose.yml -
+# only recreate_matter_server sets it, for the one call it makes.
+COMPOSE_OVERRIDE=""
 compose() {
-  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE $*"
+  log "\$ docker compose -f $STACK/docker-compose.yml${COMPOSE_OVERRIDE:+ -f $COMPOSE_OVERRIDE} --project-directory $STACK_HOST_PATH --env-file $ENV_FILE $*"
   refresh_heartbeat
-  docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
-    --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
+  if [ -n "$COMPOSE_OVERRIDE" ]; then
+    docker compose -f "$STACK/docker-compose.yml" -f "$COMPOSE_OVERRIDE" \
+      --project-directory "$STACK_HOST_PATH" --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
+  else
+    docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
+      --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
+  fi
   compose_status=$?
   refresh_heartbeat
   return $compose_status
@@ -1130,6 +1139,53 @@ verify_bluetooth() {
 ROLLING=false
 FAILED_STEP=""
 
+# The Bluetooth adapter is an environment variable of matter-server, so a
+# change has to recreate it - but on the image it runs now, not on the one
+# docker-compose.yml pins. Moving matter-server to a new image is
+# matter-server-once.sh's job, with a backup of its data, a node count and
+# a rollback; a plain `compose up` here would skip all three, and after a
+# rolled-back move it would bring back the very image that just failed
+# (design "matter-server follows its pinned image", 2026-11-22, section 12).
+#
+# Done as matter-server-once.sh does its rollback: an override file that
+# sets only `image:`, since the Compose file pins the image literally. It
+# names the reference the container was created from while that still
+# resolves to the container's image ID on this host - so
+# matter-server-once.sh still sees a version of the same repository - and
+# the image ID otherwise. Either way the image is on the host, and nothing
+# is pulled.
+#
+# Read once, at the first recreate of a pass, and kept for the rollback's:
+# the rollback must go back to the image from before the request even if
+# the forward recreate removed the container and failed to create a new
+# one. Without a container to read it from there is no image to keep, and
+# the recreate fails rather than fall back to the pinned one.
+MATTER_SERVER_IMAGE=""
+MATTER_SERVER_OVERRIDE="$UPDATE_DIR/radios-matter-server.yml"
+recreate_matter_server() {
+  if [ -z "$MATTER_SERVER_IMAGE" ]; then
+    # `--type container`: an image called matter-server must not answer
+    # for a missing container.
+    inspected="$(timeout "$PROBE_TIMEOUT" docker inspect --type container matter-server 2>/dev/null)" || inspected=""
+    created_from="$(printf '%s' "$inspected" | jq -r '.[0].Config.Image // empty' 2>/dev/null)" || created_from=""
+    image_id="$(printf '%s' "$inspected" | jq -r '.[0].Image // empty' 2>/dev/null)" || image_id=""
+    if [ -z "$image_id" ]; then
+      log "radios request $JOB_ID: no matter-server container to read its image from - not recreating it"
+      return 1
+    fi
+    MATTER_SERVER_IMAGE="$image_id"
+    if [ -n "$created_from" ] && [ "$(timeout "$PROBE_TIMEOUT" docker image inspect --format '{{.Id}}' "$created_from" 2>/dev/null)" = "$image_id" ]; then
+      MATTER_SERVER_IMAGE="$created_from"
+    fi
+  fi
+  printf 'services:\n  matter-server:\n    image: "%s"\n' "$MATTER_SERVER_IMAGE" > "$MATTER_SERVER_OVERRIDE" || return 1
+  COMPOSE_OVERRIDE="$MATTER_SERVER_OVERRIDE"
+  compose up -d --no-deps --force-recreate matter-server
+  recreate_status=$?
+  COMPOSE_OVERRIDE=""
+  return $recreate_status
+}
+
 step() {
   if [ "$ROLLING" = false ]; then
     write_state "$1" ""
@@ -1148,7 +1204,7 @@ step() {
 apply_and_verify() {
   if [ "$BLUETOOTH_CHANGE" = true ]; then
     step apply_bluetooth
-    compose up -d --no-deps --force-recreate matter-server || { FAILED_STEP=apply_bluetooth; return 1; }
+    recreate_matter_server || { FAILED_STEP=apply_bluetooth; return 1; }
     step verify_bluetooth
     verify_bluetooth || { FAILED_STEP=verify_bluetooth; return 1; }
   fi
@@ -1186,7 +1242,7 @@ rollback_and_verify() {
   ok=true
   if [ "$BLUETOOTH_CHANGE" = true ]; then
     step apply_bluetooth
-    if compose up -d --no-deps --force-recreate matter-server; then
+    if recreate_matter_server; then
       step verify_bluetooth
       verify_bluetooth || ok=false
     else
