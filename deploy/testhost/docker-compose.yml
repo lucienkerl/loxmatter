@@ -12,8 +12,9 @@
 #     variant reads RADIO_URL as an environment variable and accepts
 #     --backbone-interface as a command-line argument, exactly as
 #     configured below.
-#   - ghcr.io/matter-js/matterjs-server:stable (8 September 2026, running
-#     on the test Pi since 30 September 2026 - see README, section
+#   - ghcr.io/matter-js/matterjs-server, pinned to 1.6.0 (8 September
+#     2026, running on the test Pi since 30 September 2026, pinned on
+#     22 November 2026 - see the service below and README, section
 #     "Migration to matterjs-server") -> --bluetooth-adapter
 #     ${BLUETOOTH_ADAPTER} still applies for BLE commissioning via hci0,
 #     plus NOBLE_BINDINGS=dbus because the container runs unprivileged
@@ -213,7 +214,19 @@ services:
     # own format. Back up ./data BEFORE the first start on this image, and
     # verify the archive - the README says how, and why a plain `tar` as
     # the user pi misses the node file.
-    image: ghcr.io/matter-js/matterjs-server:stable
+    #
+    # Pinned to a version, not `:stable` (22 November 2026). The updater
+    # never recreates matter-server, so `:stable` meant "whatever stable
+    # was on the day this host first pulled it": the test Pi still ran
+    # 1.4.0 from August. Its matter.js (0.17.9) left a Bluetooth device
+    # in noble's `error` state after one failed connection attempt and
+    # then refused every later attempt ("Can not connect to peripheral
+    # ... because unexpected state error") until matter-server restarted
+    # - an IKEA GRILLPLATS plug next to the Pi failed 12 times in a row.
+    # matter.js 0.18.0 retries such a peripheral (matter-js/matter.js
+    # #4233); 1.6.0 ships it. Moving to a newer version is a deliberate
+    # change here, with a backup of ./data first (see README).
+    image: ghcr.io/matter-js/matterjs-server:1.6.0
     container_name: matter-server
     logging: *default-logging
     network_mode: host

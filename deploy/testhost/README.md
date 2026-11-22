@@ -202,6 +202,30 @@ What it guarantees:
 - At the end it reports which commit it shipped from and how many
   signals per device are exported.
 
+### Moving matter-server to the pinned version
+
+Because no update touches matter-server, a new version pinned in
+`docker-compose.yml` reaches an existing installation only by hand. Until
+22 November 2026 the file said `:stable`, which on the test Pi meant 1.4.0
+from August, and with it a Bluetooth bug: after one failed connection a
+device was refused until matter-server restarted ("Can not connect to
+peripheral ... because unexpected state error"). On the machine where the
+bridge runs, after the update has brought the new Compose file:
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker run --rm --user 0:0 --entrypoint tar -v "$PWD/data:/data:ro" \
+  ghcr.io/matter-js/matterjs-server:1.6.0 czf - -C / data \
+  > ~/matter-server-data-backup-$(date +%Y%m%d).tar.gz
+docker compose up -d --no-deps matter-server
+```
+
+The backup works as in "Backing up the fabric volume" below. matter-server
+is gone for about a minute while it starts. Then
+`docker logs matter-server | grep "Registered"` should report every node
+("Registered 27 of 27 nodes" on the test Pi, 1.4.0 to 1.6.0), and loxmatter
+logs "connection of source matter restored" by itself.
+
 ## Enable BLE
 
 That's the actual point of the move. `python-matter-server` only uses Bluetooth

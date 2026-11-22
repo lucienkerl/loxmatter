@@ -30,6 +30,17 @@ people who don't know the code.
   once when this update reaches it; the Thread network and its devices stay
   as they are.
 
+- **Adding a device over Bluetooth no longer fails every time after one
+  failed try.** The Matter server kept a device it could not reach once as
+  broken and refused every later attempt until it was restarted: the
+  device was found, and then adding it failed, again and again, even with
+  the device right next to the bridge. loxmatter now asks for version 1.6.0
+  of the Matter server, which tries such a device again. A new installation
+  gets it straight away. An existing installation keeps the Matter server
+  it has: this update does not restart it, because all your Matter devices
+  live there. If adding Bluetooth devices keeps failing on yours, the
+  bridge's README describes the switch (back up first, then one command).
+
 ## [0.7.0] — 2026-11-09
 
 ### Before you update
