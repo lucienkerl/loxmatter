@@ -8,7 +8,35 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-22
+
+### Before you update
+
+- **The database schema rises from 18 to 19.** The update backs the database
+  up before it starts, as every update does, and nothing needs doing by
+  hand. If you ever need to go back to 0.7, restore the backup the update
+  made rather than running the old version on the new database.
+
 ### Added
+
+- **Device settings such as a motion sensor's keep time.** A Zigbee device
+  that brings configurable values along - keep time, sensitivity, an LED
+  indicator and the like - gets a new "Configuration…" entry in its tile
+  menu. Set a value there, or export it to Loxone: each value becomes an
+  output to set it and an input that reports it, offered but not ticked.
+  A battery device takes a new value the next time it wakes up; until then
+  the dialog says it is waiting. This works for every device whose Home
+  Assistant quirk describes its settings, and loxmatter now brings its own
+  description for the HOBEIAN ZG-204Z motion sensor (keep time 30, 60 or
+  120 s, sensitivity low, medium or high). In Loxone the keep time is set in
+  seconds.
+
+- **A value's recent changes on hover.** Rest the pointer on a value (or tap
+  it on a phone) to see every change it went through while the page was
+  open, with the time, how long each value held and how often it switched
+  on, plus a strip covering the last 60 minutes. Handy to see how often a
+  motion sensor triggered, without building a statistic in Loxone. The
+  history lives in the open page only and starts over when it is reloaded.
 
 - **Many more Zigbee devices: zigbee2mqtt's device library.** loxmatter now
   also knows the 4,600 devices zigbee2mqtt describes, next to the ones Home
@@ -52,18 +80,6 @@ people who don't know the code.
   than running the old version on the new database.
 
 ### Added
-
-- **Device settings such as a motion sensor's keep time.** A Zigbee device
-  that brings configurable values along - keep time, sensitivity, an LED
-  indicator and the like - gets a new "Configuration…" entry in its tile
-  menu. Set a value there, or export it to Loxone: each value becomes an
-  output to set it and an input that reports it, offered but not ticked.
-  A battery device takes a new value the next time it wakes up; until then
-  the dialog says it is waiting. This works for every device whose Home
-  Assistant quirk describes its settings, and loxmatter now brings its own
-  description for the HOBEIAN ZG-204Z motion sensor (keep time 30, 60 or
-  120 s, sensitivity low, medium or high). In Loxone the keep time is set in
-  seconds.
 
 - **A clearer export screen.** Export now shows what goes to Loxone room by
   room, groups first, with short chips such as "→ Power" or "← On/off"
