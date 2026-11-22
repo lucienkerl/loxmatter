@@ -87,6 +87,16 @@ RADIOS_WORKER="${RADIOS_WORKER:-/opt/loxmatter/radios-once.sh}"
 # not be cut off, because it is what puts the previous radio back.
 RADIOS_WORKER_TIMEOUT_SECONDS="${RADIOS_WORKER_TIMEOUT_SECONDS:-900}"
 
+# The matter-server job (design "matter-server follows its pinned image",
+# 2026-11-22) moves an existing matter-server to the image version the
+# Compose file pins, with a backup of ./data and a check of its node count.
+# Its worst case - two verifications of up to 240 s each, a restore and the
+# recreates - is about 520 s; a kill in the middle of the rollback would
+# leave matter-server stopped or on the failing image, so the limit sits
+# well above that.
+MATTER_SERVER_WORKER="${MATTER_SERVER_WORKER:-/opt/loxmatter/matter-server-once.sh}"
+MATTER_SERVER_WORKER_TIMEOUT_SECONDS="${MATTER_SERVER_WORKER_TIMEOUT_SECONDS:-900}"
+
 # The watchdog job (design "Thread setup without handwork", 2026-09-14,
 # section 4.3) replaces the crontab line 0.4.0 needed: this loop runs it
 # every WATCHDOG_INTERVAL_SECONDS itself, through the same /repo bind
@@ -256,7 +266,14 @@ while [ "$terminated" -eq 0 ]; do
     [ "$terminated" -eq 1 ] && break
   fi
 
-  # The watchdog job runs sequentially too, after the other two, rather
+  # After the radios job, for the same reason: it recreates matter-server,
+  # which nothing else may do at the same time. `-x`, like the radios job.
+  if [ -x "$MATTER_SERVER_WORKER" ]; then
+    run_worker "$MATTER_SERVER_WORKER" "$MATTER_SERVER_WORKER_TIMEOUT_SECONDS"
+    [ "$terminated" -eq 1 ] && break
+  fi
+
+  # The watchdog job runs sequentially too, after the others, rather
   # than backgrounded on its own timer: a `docker restart otbr` racing a
   # `docker compose up -d --force-recreate` of the bridge or a radio
   # change is exactly the interference the radios job's own sequencing

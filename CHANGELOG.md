@@ -8,6 +8,19 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Changed
+
+- **matter-server moves to the version this release pins, by itself.** 0.8.0
+  pinned matter-server to 1.6.0, which fixes Bluetooth commissioning that
+  failed after a single unsuccessful attempt, but only new installations
+  got it. Now the updater service moves an existing installation too: it
+  downloads the new version first, backs up matter-server's data, restarts
+  it on the new version and checks that it still knows every device. If it
+  knows fewer, the previous version and the backup come back, and that
+  version is not tried again. Matter devices are unreachable for about a
+  minute while it restarts. This needs the updater refresh that System →
+  Version offers after this update.
+
 ## [0.8.0] — 2026-11-22
 
 ### Before you update

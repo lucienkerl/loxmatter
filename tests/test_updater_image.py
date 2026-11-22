@@ -122,3 +122,12 @@ def test_the_image_ships_the_watchdog_job() -> None:
     chmod = next(line for line in source.splitlines() if "chmod +x" in line)
     assert "watchdog-once.sh" in copy.split()
     assert "/opt/loxmatter/watchdog-once.sh" in chmod.split()
+
+
+def test_the_image_ships_the_matter_server_job() -> None:
+    """Fault to prove it: remove matter-server-once.sh from the COPY line."""
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    copy = next(line for line in source.splitlines() if line.startswith("COPY "))
+    chmod = next(line for line in source.splitlines() if "chmod +x" in line)
+    assert "matter-server-once.sh" in copy.split()
+    assert "/opt/loxmatter/matter-server-once.sh" in chmod.split()
