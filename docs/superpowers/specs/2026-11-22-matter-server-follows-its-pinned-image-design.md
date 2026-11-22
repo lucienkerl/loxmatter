@@ -267,13 +267,30 @@ rollback's stop, restore, recreate and verify up to another 240 s. About
 - **The web UI.** The job is reported in its own state file and log. A line
   under System → Version ("matter-server moved to 1.6.0, 27 of 27 nodes")
   is a follow-up.
-- **The radios job's Bluetooth recreate.** A Bluetooth change on the Radios
-  card runs `compose up --force-recreate matter-server`, which brings the
-  pinned image along without a backup. That was so before this change.
-  After a rolled-back move it matters more: the next Bluetooth change would
-  recreate matter-server on the image that just failed. Pinning that
-  recreate to the running image, so this worker is the only thing that
-  changes matter-server's image, is a follow-up.
+- **The radios job's Bluetooth recreate** is not out of scope; it is
+  decided here, so that this worker stays the only thing that changes
+  matter-server's image. A Bluetooth change on the Radios card has to
+  recreate matter-server, because the adapter is one of its environment
+  variables. Until now that recreate ran on `docker-compose.yml` alone and
+  so brought the pinned image along, without a backup or a node count -
+  and after a rolled-back move, the image that had just failed.
+
+  `radios-once.sh` now recreates matter-server through an override file in
+  the update directory, `radios-matter-server.yml`, that sets only
+  `image:`, chosen as this worker's rollback chooses it (section 9): the
+  container's `.Config.Image` while that still resolves to the same ID as
+  its `.Image`, the image ID otherwise. The image is read once, at the
+  first recreate of a pass, and kept for the rollback's, which therefore
+  goes back to the image from before the request even if the forward
+  recreate removed the container. With no matter-server container to read
+  it from, the step fails (`apply_bluetooth_failed`) and nothing is
+  created: falling back to the pinned image is exactly the move this job
+  must leave alone. `apply_and_verify` and `rollback_and_verify` call the
+  same helper, `recreate_matter_server`.
+
+  A host whose move was rolled back therefore keeps the old image through
+  any number of Bluetooth changes, and section 8 keeps this worker from
+  trying the same target again; the next release's pin is the next move.
 - **`python-matter-server` installations** (section 5, case 4) stay on the
   manual migration.
 - **`scripts/update.sh`** keeps leaving matter-server alone. The README's
@@ -292,6 +309,11 @@ lower count and a missing count each roll back to the previous image ID
 with the backup restored and the failed directory kept; a failed restore
 leaves matter-server stopped; one attempt per target; an interrupted pass;
 the heartbeat moves through the verification.
+
+`tests/test_updater_radios_script.py` covers section 12's Bluetooth
+recreate: the forward recreate and the rollback's each keep the running
+image; a reference that names another image now, or none, is replaced by
+the image ID; without a container nothing is created.
 
 `tests/test_updater_entrypoint.py` and `tests/test_updater_image.py` pin the
 new worker's place in the loop and in the image.

@@ -98,13 +98,36 @@ OTBR_DEFAULTS = (
     'DEFAULT_INSPECT_LOGCONFIG=\'{"Type": "json-file", "Config": {"max-file": "3", "max-size": "10m"}}\'\n'
 )
 
+# matter-server runs another image than docker-compose.yml pins: a host
+# whose move to the pinned image was rolled back by matter-server-once.sh
+# looks like this. A Bluetooth recreate must keep the running one.
+MATTER_SERVER_RUNNING_REF = "ghcr.io/matter-js/matterjs-server:stable"
+MATTER_SERVER_RUNNING_ID = "sha256:5ab1e000" + "b" * 56
+MATTER_SERVER_PINNED_REF = "ghcr.io/matter-js/matterjs-server:1.6.0"
+MATTER_SERVER_DEFAULTS = (
+    f"DEFAULT_MS_IMAGE='{MATTER_SERVER_RUNNING_REF}'\n"
+    f"DEFAULT_MS_IMAGE_ID='{MATTER_SERVER_RUNNING_ID}'\n"
+    f"PINNED_MS_IMAGE='{MATTER_SERVER_PINNED_REF}'\n"
+)
+
 DOCKER_STUB = (
     r"""#!/bin/sh
 printf 'docker %s\n' "$*" >> "$STUB_LOG"
 """
     + OTBR_DEFAULTS
+    + MATTER_SERVER_DEFAULTS
     + ADVANCE
     + r"""
+# The image ID a reference resolves to on this host: $FAKE/image_ids holds
+# "reference id" lines; the running matter-server's own reference resolves
+# to its own ID unless a test says otherwise.
+image_id_of() {
+  if [ -f "$FAKE/image_ids" ]; then
+    awk -v ref="$1" '$1 == ref { print $2; found = 1 } END { exit !found }' "$FAKE/image_ids" && return 0
+  fi
+  [ "$1" = "$DEFAULT_MS_IMAGE" ] && [ ! -f "$FAKE/image_ids" ] && echo "$DEFAULT_MS_IMAGE_ID"
+  return 0
+}
 case "$1" in
   ps)
     [ -f "$FAKE/otbr_state" ] && cat "$FAKE/otbr_state"
@@ -131,11 +154,29 @@ case "$1" in
     esac
     exit 0 ;;
   image)
+    # `docker image inspect --format {{.Id}} <ref>`: the ID it resolves to,
+    # or an error for a reference that names no image here.
+    if [ "$3" = --format ]; then
+      id="$(image_id_of "$5")"
+      [ -n "$id" ] && { echo "$id"; exit 0; }
+      echo "Error: No such image: $5" >&2; exit 1
+    fi
     # `docker image inspect <ref>`: an image is on the host when it is
     # listed in $FAKE/local_images - which a successful pull adds to.
     grep -qxF "$3" "$FAKE/local_images" 2>/dev/null
     exit ;;
   inspect)
+    # matter-server: the reference it was created from ($FAKE/ms_image)
+    # and the ID it runs ($FAKE/ms_image_id). $FAKE/ms_absent: none.
+    case "$*" in *" matter-server")
+      if [ -f "$FAKE/ms_absent" ]; then
+        echo '[]'; echo 'Error: No such object: matter-server' >&2; exit 1
+      fi
+      printf '[{"Id": "matter-server-1", "Image": "%s", "Config": {"Image": "%s"}, "State": {"Running": true}}]\n' \
+        "$(cat "$FAKE/ms_image_id" 2>/dev/null || echo "$DEFAULT_MS_IMAGE_ID")" \
+        "$(cat "$FAKE/ms_image" 2>/dev/null || echo "$DEFAULT_MS_IMAGE")"
+      exit 0 ;;
+    esac
     # The shape `docker inspect` has, measured 14 September 2026. The
     # container Id changes with every recreate, as a real one does.
     if [ ! -f "$FAKE/otbr_state" ]; then
@@ -201,6 +242,25 @@ case "$1" in
         fi
         echo running > "$FAKE/otbr_state"
         echo $(( $(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0) + 1 )) > "$FAKE/otbr_ups" ;;
+      *" up "*matter-server*)
+        # The image the recreated container runs: the one an override file
+        # names (logged, so a test can read what it said), the pinned one
+        # without. An image ID stands for itself.
+        image="$PINNED_MS_IMAGE"
+        set -- "$@"
+        while [ $# -gt 0 ]; do
+          if [ "$1" = -f ] && [ "${2##*/}" != docker-compose.yml ]; then
+            sed 's/^/override /' "$2" >> "$STUB_LOG"
+            image="$(sed -n 's/^ *image: *"\(.*\)"$/\1/p' "$2")"
+          fi
+          shift
+        done
+        printf '%s\n' "$image" > "$FAKE/ms_image"
+        case "$image" in
+          sha256:*) printf '%s\n' "$image" > "$FAKE/ms_image_id" ;;
+          *) printf '%s\n' "$(image_id_of "$image")" > "$FAKE/ms_image_id" ;;
+        esac
+        rm -f "$FAKE/ms_absent" ;;
       *" rm "*otbr*) rm -f "$FAKE/otbr_state" ;;
     esac
     exit 0 ;;
@@ -1015,6 +1075,108 @@ def test_switching_the_bluetooth_adapter_recreates_only_matter_server(radios):
     assert _compose(calls, "otbr") == []
     assert "curl " in calls
     assert list(radios.env_file.parent.glob(".env.radios-*"))
+
+
+def _bluetooth_request(radios):
+    (radios.sys_bluetooth / "hci1").mkdir()
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    _request(radios, bluetooth={"adapter": 1})
+
+
+def _overrides(calls: str) -> list[list[str]]:
+    """What each override file the `docker` stub saw said, one list of
+    lines per matter-server recreate."""
+    blocks: list[list[str]] = []
+    for line in calls.splitlines():
+        if line == "override services:":
+            blocks.append([])
+        if line.startswith("override "):
+            blocks[-1].append(line.removeprefix("override "))
+    return blocks
+
+
+def _image_only(image: str) -> list[str]:
+    return ["services:", "  matter-server:", f'    image: "{image}"']
+
+
+def test_a_bluetooth_change_keeps_matter_server_on_the_image_it_runs(radios):
+    """Fault: the recreate runs on docker-compose.yml alone and so moves
+    matter-server to the pinned image - without matter-server-once.sh's
+    backup and node count, and after a rolled-back move onto the image that
+    just failed."""
+    _bluetooth_request(radios)
+    _, calls, state = radios()
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    (up,) = _compose(calls, "up", "--force-recreate", "matter-server")
+    assert f"-f {radios.update_dir / 'radios-matter-server.yml'}" in up
+    assert _overrides(calls) == [_image_only(MATTER_SERVER_RUNNING_REF)]
+    assert (radios.fake / "ms_image").read_text().strip() == MATTER_SERVER_RUNNING_REF
+    assert (radios.fake / "ms_image_id").read_text().strip() == MATTER_SERVER_RUNNING_ID
+
+
+def test_a_bluetooth_rollback_keeps_matter_server_on_the_image_it_ran(radios):
+    """Fault: rollback_and_verify was left on the plain recreate when
+    apply_and_verify was changed - the rollback, which runs only after a
+    verification failed, is then the call that brings the pinned image."""
+    (radios.fake / "matter_up").write_text("no")
+    _bluetooth_request(radios)
+    _, calls, state = radios()
+    assert (state["phase"], state["error"], state["rolled_back"]) == (
+        "failed",
+        "verify_bluetooth_failed",
+        True,
+    )
+    ups = _compose(calls, "up", "--force-recreate", "matter-server")
+    assert len(ups) == 2
+    assert all("radios-matter-server.yml" in up for up in ups)
+    assert _overrides(calls) == [_image_only(MATTER_SERVER_RUNNING_REF)] * 2
+    assert (radios.fake / "ms_image").read_text().strip() == MATTER_SERVER_RUNNING_REF
+
+
+def test_a_reference_that_names_another_image_now_is_kept_by_image_id(radios):
+    """Fault: the override names `.Config.Image` without checking it - after
+    the tag was moved to another image (a pull of `:stable`), recreating
+    from it changes matter-server's image after all."""
+    (radios.fake / "image_ids").write_text(
+        f"{MATTER_SERVER_RUNNING_REF} sha256:{'c' * 64}\n", encoding="utf-8"
+    )
+    _bluetooth_request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert _overrides(calls) == [_image_only(MATTER_SERVER_RUNNING_ID)]
+    assert (radios.fake / "ms_image_id").read_text().strip() == MATTER_SERVER_RUNNING_ID
+
+
+def test_a_reference_that_is_gone_is_kept_by_image_id(radios):
+    """Fault: a reference that no longer resolves at all (its tag removed)
+    is still written into the override, and Compose then pulls whatever the
+    registry calls that tag today."""
+    (radios.fake / "image_ids").write_text("", encoding="utf-8")
+    _bluetooth_request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert _overrides(calls) == [_image_only(MATTER_SERVER_RUNNING_ID)]
+
+
+def test_without_a_matter_server_container_a_bluetooth_change_creates_none(radios):
+    """Fault: with no container to read an image from, the recreate falls
+    back to docker-compose.yml and creates matter-server on the pinned
+    image - the one move this job must leave to matter-server-once.sh."""
+    (radios.fake / "ms_absent").write_text("")
+    _bluetooth_request(radios)
+    before = radios.env_file.read_bytes()
+    _, calls, state = radios()
+    assert (state["phase"], state["error"], state["rolled_back"]) == (
+        "failed",
+        "apply_bluetooth_failed",
+        True,
+    )
+    assert state["healthy"] is False
+    assert _compose(calls, "up", "matter-server") == []
+    assert not (radios.fake / "ms_image").exists()
+    assert radios.env_file.read_bytes() == before
 
 
 def test_switching_the_thread_stick_writes_the_by_id_path_and_recreates_otbr(radios):
