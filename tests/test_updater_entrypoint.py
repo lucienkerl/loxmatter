@@ -807,3 +807,55 @@ def test_a_clock_that_steps_backwards_does_not_silence_the_watchdog(tmp_path: Pa
 
     assert result.returncode == 0, result.stderr
     assert order.read_text().split() == ["watchdog", "watchdog"]
+
+
+def test_the_matter_server_worker_runs_between_the_radios_worker_and_the_watchdog(
+    tmp_path: Path,
+) -> None:
+    """Design "matter-server follows its pinned image" (2026-11-22), section
+    3: it recreates matter-server, which the radios job does too, so the two
+    must never overlap.
+
+    Fault to prove it: remove the matter-server worker call from the loop."""
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", f'echo update >> "{order}"')
+    radios = _script(tmp_path, "radios.sh", f'echo radios >> "{order}"')
+    matter = _script(tmp_path, "matter.sh", f'echo matter-server >> "{order}"')
+    watchdog = _script(tmp_path, "watchdog.sh", f'echo watchdog >> "{order}"')
+
+    result = _run(
+        tmp_path,
+        update,
+        RADIOS_WORKER=str(radios),
+        MATTER_SERVER_WORKER=str(matter),
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["update", "radios", "matter-server", "watchdog"]
+
+
+def test_a_missing_matter_server_worker_is_skipped_quietly(tmp_path: Path) -> None:
+    update = _script(tmp_path, "update.sh", "exit 0")
+
+    result = _run(
+        tmp_path,
+        update,
+        MATTER_SERVER_WORKER=str(tmp_path / "absent.sh"),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "absent.sh" not in result.stderr
+
+
+def test_the_matter_server_worker_has_its_own_900_s_limit() -> None:
+    """Its worst case is about 520 s (design 2026-11-22, section 11); the
+    update's 600 s would leave too little room for a slow rollback."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert (
+        'MATTER_SERVER_WORKER_TIMEOUT_SECONDS="${MATTER_SERVER_WORKER_TIMEOUT_SECONDS:-900}"'
+        in source
+    )
+    assert 'run_worker "$MATTER_SERVER_WORKER" "$MATTER_SERVER_WORKER_TIMEOUT_SECONDS"' in source

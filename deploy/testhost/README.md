@@ -204,13 +204,57 @@ What it guarantees:
 
 ### Moving matter-server to the pinned version
 
-Because no update touches matter-server, a new version pinned in
-`docker-compose.yml` reaches an existing installation only by hand. Until
-22 November 2026 the file said `:stable`, which on the test Pi meant 1.4.0
-from August, and with it a Bluetooth bug: after one failed connection a
+`docker-compose.yml` pins matter-server to a version
+(`ghcr.io/matter-js/matterjs-server:1.6.0`). Until 22 November 2026 it said
+`:stable`, which nothing ever pulled again: on the test Pi that meant 1.4.0
+from August, and with it a Bluetooth bug - after one failed connection a
 device was refused until matter-server restarted ("Can not connect to
-peripheral ... because unexpected state error"). On the machine where the
-bridge runs, after the update has brought the new Compose file:
+peripheral ... because unexpected state error").
+
+**With the updater sidecar** (design
+`docs/superpowers/specs/2026-11-22-matter-server-follows-its-pinned-image-design.md`),
+a new pin reaches an existing installation by itself, once the sidecar runs
+the image that carries `matter-server-once.sh` (System → Version shows the
+refresh command). When the running matter-server was created from another
+version of the same image, the sidecar:
+
+1. pulls the pinned version while the old one keeps running (in one pass;
+   the move follows in the next);
+2. stops matter-server and backs up `./data` to
+   `/data/backups/matter-server-data-<time>.tgz` in the `loxmatter-store`
+   volume (the newest three are kept);
+3. recreates matter-server and waits up to four minutes for its
+   `Registered N of N nodes` line;
+4. if that line reports fewer nodes than before the move, or does not come,
+   stops it again, restores the backup (the directory the new version left
+   is kept as `data.failed-<time>`) and recreates it from the previous image.
+
+A version that was rolled back is not tried again until a release pins
+another one. matter-server is gone for about a minute while it starts, and
+loxmatter logs "connection of source matter restored" by itself.
+
+It does nothing when matter-server already runs the pinned image, when
+anything other than the image differs, when the image is a different one
+altogether (python-matter-server → matterjs-server is the migration further
+below), when `./data` lives outside this directory, or when matter-server's
+log no longer holds the `Registered` line it would compare against - then
+`docker restart matter-server` writes it again. What it did and why:
+
+```bash
+docker exec loxmatter-updater cat /data/update/matter-server-log.txt
+docker exec loxmatter-updater cat /data/update/matter-server-state.json
+```
+
+If it ever ends with `restore_failed`, matter-server is left stopped on
+purpose. Copy the archive out of the volume and restore it as described in
+"Backing up the fabric volume" below:
+
+```bash
+docker cp loxmatter-updater:/data/backups/matter-server-data-<time>.tgz .
+```
+
+**By hand**, on a host without the sidecar, on the machine where the bridge
+runs, after the update has brought the new Compose file:
 
 ```bash
 cd ~/matter-loxone/deploy/testhost
@@ -220,11 +264,9 @@ docker run --rm --user 0:0 --entrypoint tar -v "$PWD/data:/data:ro" \
 docker compose up -d --no-deps matter-server
 ```
 
-The backup works as in "Backing up the fabric volume" below. matter-server
-is gone for about a minute while it starts. Then
+The backup works as in "Backing up the fabric volume" below. Then
 `docker logs matter-server | grep "Registered"` should report every node
-("Registered 27 of 27 nodes" on the test Pi, 1.4.0 to 1.6.0), and loxmatter
-logs "connection of source matter restored" by itself.
+("Registered 27 of 27 nodes" on the test Pi, 1.4.0 to 1.6.0).
 
 ## Enable BLE
 

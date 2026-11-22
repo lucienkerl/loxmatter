@@ -1,5 +1,9 @@
 # Local deployment configuration and runtime data - not part of the repo.
 .env
 data/
+# What the updater's matter-server job leaves beside it after a rollback
+# (design 2026-11-22, section 9).
+data.restore-*/
+data.failed-*/
 *.dataset
 thread-dataset*
